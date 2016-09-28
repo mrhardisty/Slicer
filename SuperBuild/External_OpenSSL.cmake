@@ -55,6 +55,9 @@ if(NOT DEFINED OPENSSL_LIBRARIES
     set(OpenSSL_1.0.1l_URL http://packages.kitware.com/download/item/7669/openssl-1.0.1l.tar.gz)
     set(OpenSSL_1.0.1l_MD5 cdb22925fc9bc97ccbf1e007661f2aa6)
 
+    set(OpenSSL_1.0.2h_URL https://www.openssl.org/source/old/1.0.2/openssl-1.0.2h.tar.gz)
+    set(OpenSSL_1.0.1l_MD5 9392e65072ce4b614c1392eefc1f23d0)
+
     if(NOT DEFINED OpenSSL_${OPENSSL_DOWNLOAD_VERSION}_URL)
       message(FATAL_ERROR "There is no source version of OpenSSL ${OPENSSL_DOWNLOAD_VERSION} available.
 You could either:
