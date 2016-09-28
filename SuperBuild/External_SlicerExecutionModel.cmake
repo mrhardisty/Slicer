@@ -4,6 +4,10 @@ set(proj SlicerExecutionModel)
 # Set dependency list
 set(${proj}_DEPENDENCIES ${ITK_EXTERNAL_NAME})
 
+if(Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT)
+  set(${proj}_DEPENDENCIES ${${proj}_DEPENDENCIES} JsonCpp ParameterSerializer)
+endif()
+
 # Include dependent projects if any
 ExternalProject_Include_Dependencies(${proj} PROJECT_VAR proj DEPENDS_VAR ${proj}_DEPENDENCIES)
 
@@ -18,10 +22,11 @@ endif()
 
 if(NOT DEFINED SlicerExecutionModel_DIR AND NOT ${CMAKE_PROJECT_NAME}_USE_SYSTEM_${proj})
 
-  set(EXTERNAL_PROJECT_OPTIONAL_ARGS)
+  set(EXTERNAL_PROJECT_OPTIONAL_CMAKE_CACHE_ARGS)
+  set(EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS)
 
   if(APPLE)
-    list(APPEND EXTERNAL_PROJECT_OPTIONAL_ARGS
+    list(APPEND EXTERNAL_PROJECT_OPTIONAL_CMAKE_CACHE_ARGS
       -DSlicerExecutionModel_DEFAULT_CLI_EXECUTABLE_LINK_FLAGS:STRING=-Wl,-rpath,@loader_path/../../../
       )
   endif()
@@ -32,7 +37,7 @@ if(NOT DEFINED SlicerExecutionModel_DIR AND NOT ${CMAKE_PROJECT_NAME}_USE_SYSTEM
 
   macro(_set var type value)
     set(${var} ${value})
-    list(APPEND EXTERNAL_PROJECT_OPTIONAL_ARGS
+    list(APPEND EXTERNAL_PROJECT_OPTIONAL_CMAKE_CACHE_ARGS
       -D${var}:${type}=${value}
       )
   endmacro()
@@ -51,10 +56,27 @@ if(NOT DEFINED SlicerExecutionModel_DIR AND NOT ${CMAKE_PROJECT_NAME}_USE_SYSTEM
   _set(SlicerExecutionModel_DEFAULT_CLI_INSTALL_ARCHIVE_DESTINATION STRING
     ${Slicer_INSTALL_CLIMODULES_LIB_DIR})
 
+  if(Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT)
+    _set(ParameterSerializer_DIR PATH ${ParameterSerializer_DIR})
+    _set(JsonCpp_INCLUDE_DIR PATH ${JsonCpp_INCLUDE_DIR})
+
+    # JsoncCpp_LIBRARY needs to be added as a CMAKE_ARGS because it contains an
+    # expression that needs to be evaluated
+    list(APPEND EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS
+      -DJsonCpp_LIBRARY:PATH=${JsonCpp_LIBRARY}
+      )
+  endif()
+
+  if(NOT EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS STREQUAL "")
+    set(EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS
+      CMAKE_ARGS
+      ${EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS})
+  endif()
+
   ExternalProject_Add(${proj}
     ${${proj}_EP_ARGS}
     GIT_REPOSITORY "${git_protocol}://github.com/Slicer/SlicerExecutionModel.git"
-    GIT_TAG "26a62a0b004a34485656d7d40a67c80032827b02"
+    GIT_TAG "983d2112ec431af20cafa49ca6cf7bd1a777869a"
     SOURCE_DIR ${CMAKE_BINARY_DIR}/${proj}
     BINARY_DIR ${proj}-build
     CMAKE_CACHE_ARGS
@@ -64,13 +86,17 @@ if(NOT DEFINED SlicerExecutionModel_DIR AND NOT ${CMAKE_PROJECT_NAME}_USE_SYSTEM
       -DCMAKE_C_FLAGS:STRING=${ep_common_c_flags} # Unused
       -DBUILD_TESTING:BOOL=OFF
       -DITK_DIR:PATH=${ITK_DIR}
+      -DGenerateCLP_USE_SERIALIZER:BOOL=${Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT}
+      -DModuleDescriptionParser_USE_SERIALIZER:BOOL=${Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT}
+      -DSlicerExecutionModel_USE_JSONCPP:BOOL=${Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT}
       -DSlicerExecutionModel_LIBRARY_PROPERTIES:STRING=${Slicer_LIBRARY_PROPERTIES}
       -DSlicerExecutionModel_INSTALL_BIN_DIR:PATH=${Slicer_INSTALL_LIB_DIR}
       -DSlicerExecutionModel_INSTALL_LIB_DIR:PATH=${Slicer_INSTALL_LIB_DIR}
       #-DSlicerExecutionModel_INSTALL_SHARE_DIR:PATH=${Slicer_INSTALL_ROOT}share/${SlicerExecutionModel}
       -DSlicerExecutionModel_INSTALL_NO_DEVELOPMENT:BOOL=${Slicer_INSTALL_NO_DEVELOPMENT}
       -DSlicerExecutionModel_DEFAULT_CLI_TARGETS_FOLDER_PREFIX:STRING=Module-
-      ${EXTERNAL_PROJECT_OPTIONAL_ARGS}
+      ${EXTERNAL_PROJECT_OPTIONAL_CMAKE_CACHE_ARGS}
+      ${EXTERNAL_PROJECT_OPTIONAL_CMAKE_ARGS}
     INSTALL_COMMAND ""
     DEPENDS
       ${${proj}_DEPENDENCIES}

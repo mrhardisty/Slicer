@@ -79,6 +79,7 @@ vtkMRMLNodeNewMacro(vtkMRMLModelStorageNode);
 //----------------------------------------------------------------------------
 vtkMRMLModelStorageNode::vtkMRMLModelStorageNode()
 {
+  this->DefaultWriteFileExtension = "vtk";
 }
 
 //----------------------------------------------------------------------------
@@ -104,7 +105,7 @@ int vtkMRMLModelStorageNode::ReadDataInternal(vtkMRMLNode *refNode)
   vtkMRMLModelNode *modelNode = dynamic_cast <vtkMRMLModelNode *> (refNode);
 
   std::string fullName = this->GetFullNameFromFileName();
-  if (fullName == std::string(""))
+  if (fullName.empty())
     {
     vtkErrorMacro("ReadDataInternal: File name not specified");
     return 0;
@@ -296,7 +297,7 @@ int vtkMRMLModelStorageNode::WriteDataInternal(vtkMRMLNode *refNode)
   vtkMRMLModelNode *modelNode = vtkMRMLModelNode::SafeDownCast(refNode);
 
   std::string fullName = this->GetFullNameFromFileName();
-  if (fullName == std::string(""))
+  if (fullName.empty())
     {
     vtkErrorMacro("vtkMRMLModelNode: File name not specified");
     return 0;
@@ -407,10 +408,3 @@ void vtkMRMLModelStorageNode::InitializeSupportedWriteFileTypes()
   this->SupportedWriteFileTypes->InsertNextValue("STL (.stl)");
   this->SupportedWriteFileTypes->InsertNextValue("PLY (.ply)");
 }
-
-//----------------------------------------------------------------------------
-const char* vtkMRMLModelStorageNode::GetDefaultWriteFileExtension()
-{
-  return "vtk";
-}
-

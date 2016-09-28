@@ -194,53 +194,15 @@ void qSlicerSegmentationsModuleWidget::updateWidgetFromMRML()
     }
   d->MRMLNodeComboBox_OtherSegmentationOrRepresentationNode->sortFilterProxyModel()->setHiddenNodeIDs(hiddenNodeIDs);
 
-  // Populate representations comboboxes
-  this->populate3DRepresentationsCombobox();
-  this->populate2DRepresentationsCombobox();
-
   // Update display group from segmentation display node
-  this->updateWidgetFromDisplayNode();
+  d->SegmentationDisplayNodeWidget->setSegmentationNode(d->SegmentationNode);
+  d->SegmentationDisplayNodeWidget->updateWidgetFromMRML();
 
   // Update copy/move/import/export buttons from selection
   this->updateCopyMoveButtonStates();
 
   // Update segment handler button states based on segment selection
   this->onSegmentSelectionChanged(QItemSelection(),QItemSelection());
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::updateWidgetFromDisplayNode()
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  d->CollapsibleButton_Display->setEnabled(displayNode != NULL);
-  if (!displayNode)
-    {
-    return;
-    }
-
-  // Update display property widgets
-  d->checkBox_Visible->setChecked( displayNode->GetVisibility() );
-  d->SliderWidget_Opacity->setValue( displayNode->GetOpacity() );
-  d->spinBox_SliceIntersectionThickness->setValue( displayNode->GetSliceIntersectionThickness() );
-
-  // Set displayed representation selections
-  std::string displayRepresentation3D = displayNode->GetDisplayRepresentationName3D();
-  if (!displayRepresentation3D.empty())
-    {
-    d->comboBox_DisplayedRepresentation3D->setCurrentIndex( d->comboBox_DisplayedRepresentation3D->findText(
-      displayRepresentation3D.c_str() ) );
-    }
-  std::string displayRepresentation2D = displayNode->GetDisplayRepresentationName2D();
-  if (!displayRepresentation2D.empty())
-    {
-    d->comboBox_DisplayedRepresentation2D->setCurrentIndex( d->comboBox_DisplayedRepresentation2D->findText(
-      displayRepresentation2D.c_str() ) );
-    }
-
-  // Set display node to display widgets
-  d->DisplayNodeViewComboBox->setMRMLDisplayNode(displayNode);
 }
 
 //-----------------------------------------------------------------------------
@@ -281,88 +243,6 @@ void qSlicerSegmentationsModuleWidget::updateCopyMoveButtonStates()
 }
 
 //-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::populate3DRepresentationsCombobox()
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  // Note: This function used to collect existing poly data representations from
-  // the segmentation and was connected to events like this:
-  // qvtkConnect( segmentationNode, vtkSegmentation::RepresentationCreated, this, SLOT( populateRepresentationsCombobox() ) );
-  // It was then decided that a preferred poly data representation can be selected
-  // regardless its existence, thus the combobox is populated only once at initialization.
-
-  // Prevent selecting incrementally added representations thus changing MRML properties
-  d->comboBox_DisplayedRepresentation3D->blockSignals(true);
-  d->comboBox_DisplayedRepresentation3D->clear();
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode(true);
-  if (!displayNode) // This means there was no segmentation node selected
-    {
-    d->comboBox_DisplayedRepresentation3D->blockSignals(false);
-    return;
-    }
-
-  // Populate 3D representations combobox with only poly data representations
-  std::set<std::string> modelRepresentationNames;
-  displayNode->GetPolyDataRepresentationNames(modelRepresentationNames);
-  for (std::set<std::string>::iterator reprIt = modelRepresentationNames.begin();
-    reprIt != modelRepresentationNames.end(); ++reprIt)
-    {
-    d->comboBox_DisplayedRepresentation3D->addItem(reprIt->c_str());
-    }
-
-  // Unblock signals
-  d->comboBox_DisplayedRepresentation3D->blockSignals(false);
-
-  // Set selection from display node
-  std::string displayRepresentation3D = displayNode->GetDisplayRepresentationName3D();
-  if (!displayRepresentation3D.empty())
-    {
-    d->comboBox_DisplayedRepresentation3D->setCurrentIndex( d->comboBox_DisplayedRepresentation3D->findText(
-      displayRepresentation3D.c_str() ) );
-    }
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::populate2DRepresentationsCombobox()
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  // Prevent selecting incrementally added representations thus changing MRML properties
-  d->comboBox_DisplayedRepresentation2D->blockSignals(true);
-  d->comboBox_DisplayedRepresentation2D->clear();
-
-  vtkMRMLSegmentationNode* segmentationNode =  vtkMRMLSegmentationNode::SafeDownCast(
-    d->MRMLNodeComboBox_Segmentation->currentNode() );
-  if (!segmentationNode)
-    {
-    d->comboBox_DisplayedRepresentation2D->blockSignals(false);
-    return;
-    }
-
-  // Populate 2D representations combobox with all available representations
-  std::set<std::string> representationNames;
-  segmentationNode->GetSegmentation()->GetAvailableRepresentationNames(representationNames);
-  for (std::set<std::string>::iterator reprIt = representationNames.begin();
-    reprIt != representationNames.end(); ++reprIt)
-    {
-    d->comboBox_DisplayedRepresentation2D->addItem(reprIt->c_str());
-    }
-
-  // Unblock signals
-  d->comboBox_DisplayedRepresentation2D->blockSignals(false);
-
-  // Set selection from display node
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode(true);
-  std::string displayRepresentation2D = displayNode->GetDisplayRepresentationName2D();
-  if (!displayRepresentation2D.empty())
-    {
-    d->comboBox_DisplayedRepresentation2D->setCurrentIndex( d->comboBox_DisplayedRepresentation2D->findText(
-      displayRepresentation2D.c_str() ) );
-    }
-}
-
-//-----------------------------------------------------------------------------
 void qSlicerSegmentationsModuleWidget::init()
 {
   Q_D(qSlicerSegmentationsModuleWidget);
@@ -397,17 +277,6 @@ void qSlicerSegmentationsModuleWidget::init()
 
   connect(d->MRMLNodeComboBox_OtherSegmentationOrRepresentationNode, SIGNAL(currentNodeChanged(vtkMRMLNode*)),
     this, SLOT(setOtherSegmentationOrRepresentationNode(vtkMRMLNode*)) );
-
-  connect(d->checkBox_Visible, SIGNAL(stateChanged(int)),
-    this, SLOT(onVisibilityChanged(int)) );
-  connect(d->SliderWidget_Opacity, SIGNAL(valueChanged(double)),
-    this, SLOT(onOpacityChanged(double)) );
-  connect(d->spinBox_SliceIntersectionThickness, SIGNAL(valueChanged(int)),
-    this, SLOT(onSliceIntersectionThicknessChanged(int)) );
-  connect(d->comboBox_DisplayedRepresentation3D, SIGNAL(currentIndexChanged(int)),
-    this, SLOT(onRepresentation3DChanged(int)) );
-  connect(d->comboBox_DisplayedRepresentation2D, SIGNAL(currentIndexChanged(int)),
-    this, SLOT(onRepresentation2DChanged(int)) );
 
   connect(d->toolButton_AddLabelmap, SIGNAL(clicked()),
     this, SLOT(onAddLabelmap()) );
@@ -453,10 +322,11 @@ void qSlicerSegmentationsModuleWidget::onSegmentationNodeChanged(vtkMRMLNode* no
   vtkMRMLSegmentationNode* segmentationNode =  vtkMRMLSegmentationNode::SafeDownCast(node);
 
   qvtkReconnect(d->SegmentationNode, segmentationNode, vtkCommand::ModifiedEvent, this, SLOT(updateWidgetFromMRML()));
-  qvtkReconnect(d->SegmentationNode, segmentationNode, vtkMRMLDisplayableNode::DisplayModifiedEvent, this, SLOT(updateWidgetFromDisplayNode()));
+  qvtkReconnect(d->SegmentationNode, segmentationNode, vtkMRMLDisplayableNode::DisplayModifiedEvent, this, SLOT(updateWidgetFromMRML()));
   qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::MasterRepresentationModified, this, SLOT(updateWidgetFromMRML()));
 
   d->SegmentationNode = segmentationNode;
+  d->SegmentationDisplayNodeWidget->setSegmentationNode(segmentationNode);
   this->updateWidgetFromMRML();
 }
 
@@ -603,82 +473,6 @@ void qSlicerSegmentationsModuleWidget::setOtherSegmentationOrRepresentationNode(
 
   // Update widgets based on selection
   this->updateCopyMoveButtonStates();
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::onVisibilityChanged(int visible)
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  if (!displayNode)
-    {
-    return;
-    }
-
-  displayNode->SetVisibility(visible > 0 ? 1 : 0);
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::onOpacityChanged(double opacity)
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  if (!displayNode)
-    {
-    return;
-    }
-
-  displayNode->SetOpacity(opacity);
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::onSliceIntersectionThicknessChanged(int thickness)
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  if (!displayNode)
-    {
-    return;
-    }
-
-  displayNode->SetSliceIntersectionThickness(thickness);
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::onRepresentation3DChanged(int index)
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  if (!displayNode)
-    {
-    return;
-    }
-
-  // Get representation name from index
-  QString representationName = d->comboBox_DisplayedRepresentation3D->itemText(index);
-
-  displayNode->SetPreferredDisplayRepresentationName3D(representationName.toLatin1().constData());
-}
-
-//-----------------------------------------------------------------------------
-void qSlicerSegmentationsModuleWidget::onRepresentation2DChanged(int index)
-{
-  Q_D(qSlicerSegmentationsModuleWidget);
-
-  vtkMRMLSegmentationDisplayNode* displayNode = this->segmentationDisplayNode();
-  if (!displayNode)
-    {
-    return;
-    }
-
-  // Get representation name from index
-  QString representationName = d->comboBox_DisplayedRepresentation2D->itemText(index);
-
-  displayNode->SetPreferredDisplayRepresentationName2D(representationName.toLatin1().constData());
 }
 
 //-----------------------------------------------------------------------------
@@ -953,20 +747,14 @@ void qSlicerSegmentationsModuleWidget::onCopyToCurrentSegmentation()
       }
     else if (modelNode)
       {
-      vtkSmartPointer<vtkSegment> segment = vtkSmartPointer<vtkSegment>::Take(
-        vtkSlicerSegmentationsModuleLogic::CreateSegmentFromModelNode(modelNode, currentSegmentationNode));
-      if (!segment.GetPointer())
+      if (this->updateMasterRepresentationInSegmentation(currentSegmentationNode->GetSegmentation(),
+        vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName()))
         {
-        QString message = QString("Failed to copy from model node %1!").arg(modelNode->GetName());
-        qCritical() << Q_FUNC_INFO << ": " << message;
-        QMessageBox::warning(NULL, tr("Failed to create segment from model"), message);
-        }
-      else
-        {
-        if (this->updateMasterRepresentationInSegmentation(currentSegmentationNode->GetSegmentation(), vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName()))
+        if (!vtkSlicerSegmentationsModuleLogic::ImportModelToSegmentationNode(modelNode, currentSegmentationNode))
           {
-          // Add segment to current segmentation
-          currentSegmentationNode->GetSegmentation()->AddSegment(segment);
+          QString message = QString("Failed to copy polydata from model node %1!").arg(modelNode->GetName());
+          qCritical() << Q_FUNC_INFO << ": " << message;
+          QMessageBox::warning(NULL, tr("Failed to import model node"), message);
           }
         }
       }
@@ -976,6 +764,7 @@ void qSlicerSegmentationsModuleWidget::onCopyToCurrentSegmentation()
       return;
       }
     }
+  currentSegmentationNode->CreateDefaultDisplayNodes();
 }
 
 //-----------------------------------------------------------------------------
@@ -1008,6 +797,7 @@ void qSlicerSegmentationsModuleWidget::onMoveToCurrentSegmentation()
     {
     qCritical() << Q_FUNC_INFO << ": Invalid operation!";
     }
+  currentSegmentationNode->CreateDefaultDisplayNodes();
 }
 
 //-----------------------------------------------------------------------------

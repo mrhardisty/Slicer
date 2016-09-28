@@ -38,6 +38,7 @@ class qMRMLSegmentsTableViewPrivate;
 class QTableWidget;
 class QTableWidgetItem;
 class QItemSelection;
+class QContextMenuEvent;
 
 /// \ingroup SlicerRt_QtModules_Segmentations_Widgets
 class Q_SLICER_MODULE_SEGMENTATIONS_WIDGETS_EXPORT qMRMLSegmentsTableView : public qMRMLWidget
@@ -103,7 +104,7 @@ public slots:
 
   virtual void setMRMLScene(vtkMRMLScene* newScene);
 
-  /// Set selection modein the table. Input value is int for Python compatibility. Actual values are
+  /// Set selection mode in the table. Input value is int for Python compatibility. Actual values are
   /// defined in QAbstractItemView::SelectionMode. For example, QAbstractItemView::NoSelection,
   /// QAbstractItemView::SingleSelection, QAbstractItemView::ExtendedSelection.
   void setSelectionMode(int mode);
@@ -113,13 +114,23 @@ public slots:
   void setColorColumnVisible(bool visible);
   void setOpacityColumnVisible(bool visible);
 
+  /// Show only selected segments
+  void showOnlySelectedSegments();
+
 signals:
   /// Emitted if selection changes
   void selectionChanged(const QItemSelection &selected, const QItemSelection &deselected);
 
+  /// Emitted when a segment property (e.g., name) is about to be changed.
+  /// Can be used for capturing the current state of the segment, before it is modified.
+  void segmentAboutToBeModified(const QString &segmentID);
+
 protected slots:
   /// Handles changing of values in a cell (segment name, visibility, color, opacity)
   void onSegmentTableItemChanged(QTableWidgetItem* changedItem);
+
+  /// Forwards selection changed events. In case of batch update of items, selected and deselected are empty.
+  void onSegmentSelectionChanged(const QItemSelection &selected, const QItemSelection &deselected);
 
   /// Handles clicks on a table cell (visibility)
   void onVisibilityButtonClicked();
@@ -133,7 +144,7 @@ protected slots:
   /// Update from segmentation node state (invoked when segment count stays the same)
   void updateWidgetFromMRML();
 
-  // Handle MRML scene event
+  /// Handle MRML scene event
   void endProcessing();
 
 protected:
@@ -147,6 +158,9 @@ protected:
 
   /// To prevent accidentally moving out of the widget when pressing up/down arrows
   virtual bool eventFilter(QObject* target, QEvent* event);
+
+  /// Handle context menu events
+  virtual void contextMenuEvent(QContextMenuEvent* event);
 
 protected:
   QScopedPointer<qMRMLSegmentsTableViewPrivate> d_ptr;

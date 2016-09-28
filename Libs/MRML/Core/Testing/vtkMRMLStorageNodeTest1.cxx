@@ -15,6 +15,7 @@
 #include "vtkMRMLLinearTransformNode.h"
 #include "vtkMRMLModelNode.h"
 #include "vtkMRMLStorageNode.h"
+#include "vtkDataFileFormatHelper.h"
 
 // VTK includes
 #include <vtkNew.h>
@@ -64,6 +65,7 @@ vtkStandardNewMacro(vtkMRMLStorageNodeTestHelper1);
 int TestBasics();
 int TestReadData();
 int TestWriteData();
+int TestExtensionFormatHelper();
 
 //---------------------------------------------------------------------------
 int vtkMRMLStorageNodeTest1(int , char * [] )
@@ -71,6 +73,7 @@ int vtkMRMLStorageNodeTest1(int , char * [] )
   CHECK_EXIT_SUCCESS(TestBasics());
   CHECK_EXIT_SUCCESS(TestReadData());
   CHECK_EXIT_SUCCESS(TestWriteData());
+  CHECK_EXIT_SUCCESS(TestExtensionFormatHelper());
   return EXIT_SUCCESS;
 }
 
@@ -139,5 +142,25 @@ int TestReadData()
 int TestWriteData()
 {
   // TODO
+  return EXIT_SUCCESS;
+}
+
+//---------------------------------------------------------------------------
+int TestExtensionFormatHelper()
+{
+  vtkNew<vtkDataFileFormatHelper> helper;
+
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("VTK File (.vtk)"), ".vtk");
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("Segmentation (.seg.nrrd)"), ".seg.nrrd");
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("This is a NRRD (.nrrd)"), ".nrrd");
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("Nifti-file (.nii.gz)"), ".nii.gz");
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("Any file (.*)"), ".*");
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString("foo"), "");
+
+  TESTING_OUTPUT_ASSERT_WARNINGS_BEGIN();
+  CHECK_STD_STRING(vtkDataFileFormatHelper::GetFileExtensionFromFormatString(".vtk"), ".vtk");
+  TESTING_OUTPUT_ASSERT_WARNINGS(1);
+  TESTING_OUTPUT_ASSERT_WARNINGS_END();
+
   return EXIT_SUCCESS;
 }

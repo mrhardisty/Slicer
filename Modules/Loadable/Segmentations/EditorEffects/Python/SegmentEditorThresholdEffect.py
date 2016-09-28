@@ -122,8 +122,8 @@ class SegmentEditorThresholdEffect(AbstractScriptedSegmentEditorEffect):
     pass # For the sake of example
 
   def setMRMLDefaults(self):
-    self.scriptedEffect.setParameter("MinimumThreshold", 0.)
-    self.scriptedEffect.setParameter("MaximumThreshold", 0)
+    self.scriptedEffect.setParameterDefault("MinimumThreshold", 0.)
+    self.scriptedEffect.setParameterDefault("MaximumThreshold", 0)
 
   def updateGUIFromMRML(self):
     self.thresholdSlider.blockSignals(True)
@@ -161,9 +161,7 @@ class SegmentEditorThresholdEffect(AbstractScriptedSegmentEditorEffect):
       min = self.scriptedEffect.doubleParameter("MinimumThreshold")
       max = self.scriptedEffect.doubleParameter("MaximumThreshold")
 
-      # Save state for undo
-      #TODO:
-      #self.undoRedo.saveState()
+      self.scriptedEffect.saveStateForUndo()
 
       # Perform thresholding
       thresh = vtk.vtkImageThreshold()

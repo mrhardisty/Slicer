@@ -290,6 +290,9 @@ CMAKE_DEPENDENT_OPTION(
   "Slicer_BUILD_ITKPython" OFF)
 mark_as_superbuild(Slicer_INSTALL_ITKPython)
 
+option(Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT "Build Slicer with parameter serializer support" OFF)
+mark_as_superbuild(Slicer_BUILD_PARAMETERSERIALIZER_SUPPORT)
+
 #
 # SimpleITK has large internal libraries, which take an extremely long
 # time to link on windows when they are static. Creating shared
@@ -514,7 +517,7 @@ endif()
 #-----------------------------------------------------------------------------
 # VTKv7 - Slicer_VTK_COMPONENTS
 #-----------------------------------------------------------------------------
-set(Slicer_VTK_RENDERING_BACKEND "OpenGL" CACHE STRING "Choose the rendering backend.")
+set(Slicer_VTK_RENDERING_BACKEND "OpenGL2" CACHE STRING "Choose the rendering backend.")
 set_property(CACHE Slicer_VTK_RENDERING_BACKEND PROPERTY STRINGS "OpenGL" "OpenGL2")
 mark_as_superbuild(Slicer_VTK_RENDERING_BACKEND)
 set(Slicer_VTK_RENDERING_USE_${Slicer_VTK_RENDERING_BACKEND}_BACKEND 1)

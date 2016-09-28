@@ -24,16 +24,19 @@
 #include "vtkOrientedImageData.h"
 
 // VTK includes
+#include <vtkDecimatePro.h>
+#include <vtkDiscreteMarchingCubes.h>
+#include <vtkImageChangeInformation.h>
+#include <vtkImageConstantPad.h>
+#include <vtkImageThreshold.h>
+#include <vtkNew.h>
 #include <vtkObjectFactory.h>
 #include <vtkPolyData.h>
-#include <vtkVersion.h>
-#include <vtkDiscreteMarchingCubes.h>
-#include <vtkDecimatePro.h>
-#include <vtkWindowedSincPolyDataFilter.h>
+#include <vtkPolyDataNormals.h>
 #include <vtkTransform.h>
 #include <vtkTransformPolyDataFilter.h>
-#include <vtkImageConstantPad.h>
-#include <vtkImageChangeInformation.h>
+#include <vtkVersion.h>
+#include <vtkWindowedSincPolyDataFilter.h>
 
 //----------------------------------------------------------------------------
 vtkSegmentationConverterRuleNewMacro(vtkBinaryLabelmapToClosedSurfaceConversionRule);
@@ -46,6 +49,9 @@ vtkBinaryLabelmapToClosedSurfaceConversionRule::vtkBinaryLabelmapToClosedSurface
     " Value of 0.8 typically reduces data set size by 80% without losing too much details.");
   this->ConversionParameters[GetSmoothingFactorParameterName()] = std::make_pair("0.5",
     "Smoothing factor. Range: 0.0 (no smoothing) to 1.0 (strong smoothing).");
+  this->ConversionParameters[GetComputeSurfaceNormalsParameterName()] = std::make_pair("1",
+    "Compute surface normals. 1 (default) = surface normals are computed. "
+    "0 = surface normals are not computed (slightly faster but produces less smooth surface display).");
 }
 
 //----------------------------------------------------------------------------
@@ -127,7 +133,8 @@ bool vtkBinaryLabelmapToClosedSurfaceConversionRule::Convert(vtkDataObject* sour
     {
     // empty labelmap
     vtkDebugMacro("Convert: No polygons can be created, input image extent is empty");
-    return false;
+    closedSurfacePolyData->Reset();
+    return true;
     }
 
   /// If input labelmap has non-background border voxels, then those regions remain open in the output closed surface.
@@ -154,11 +161,12 @@ bool vtkBinaryLabelmapToClosedSurfaceConversionRule::Convert(vtkDataObject* sour
   // Get conversion parameters
   double decimationFactor = vtkVariant(this->ConversionParameters[GetDecimationFactorParameterName()].first).ToDouble();
   double smoothingFactor = vtkVariant(this->ConversionParameters[GetSmoothingFactorParameterName()].first).ToDouble();
+  int computeSurfaceNormals = vtkVariant(this->ConversionParameters[GetComputeSurfaceNormalsParameterName()].first).ToInt();
 
   // Run marching cubes
   vtkSmartPointer<vtkDiscreteMarchingCubes> marchingCubes = vtkSmartPointer<vtkDiscreteMarchingCubes>::New();
   marchingCubes->SetInputData(binaryLabelmapWithIdentityGeometry);
-  const int labelmapFillValue = 1;
+  const int labelmapFillValue = binaryLabelmapWithIdentityGeometry->GetScalarRange()[1]; // max value
   marchingCubes->GenerateValues(1, labelmapFillValue, labelmapFillValue);
   marchingCubes->ComputeGradientsOff();
   marchingCubes->ComputeNormalsOff();
@@ -167,8 +175,9 @@ bool vtkBinaryLabelmapToClosedSurfaceConversionRule::Convert(vtkDataObject* sour
   vtkSmartPointer<vtkPolyData> processingResult = marchingCubes->GetOutput();
   if (processingResult->GetNumberOfPolys() == 0)
     {
-    vtkErrorMacro("Convert: No polygons can be created");
-    return false;
+    vtkDebugMacro("Convert: No polygons can be created, probably all voxels are empty");
+    closedSurfacePolyData->Reset();
+    return true;
     }
 
   // Decimate
@@ -211,11 +220,23 @@ bool vtkBinaryLabelmapToClosedSurfaceConversionRule::Convert(vtkDataObject* sour
   vtkSmartPointer<vtkTransformPolyDataFilter> transformPolyDataFilter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
   transformPolyDataFilter->SetInputData(processingResult);
   transformPolyDataFilter->SetTransform(labelmapGeometryTransform);
-  transformPolyDataFilter->Update();
 
-  // Set output
-  closedSurfacePolyData->ShallowCopy(transformPolyDataFilter->GetOutput());
-
+  if (computeSurfaceNormals>0)
+    {
+    vtkSmartPointer<vtkPolyDataNormals> polyDataNormals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    polyDataNormals->SetInputConnection(transformPolyDataFilter->GetOutputPort());
+    polyDataNormals->ConsistencyOn(); // discrete marching cubes may generate inconsistent surface
+    // We almost always perform smoothing, so splitting would not be able to preserve any sharp features
+    // (and sharp edges would look like artifacts in the smooth surface).
+    polyDataNormals->SplittingOff();
+    polyDataNormals->Update();
+    closedSurfacePolyData->ShallowCopy(polyDataNormals->GetOutput());
+    }
+  else
+    {
+    transformPolyDataFilter->Update();
+    closedSurfacePolyData->ShallowCopy(transformPolyDataFilter->GetOutput());
+    }
   return true;
 }
 

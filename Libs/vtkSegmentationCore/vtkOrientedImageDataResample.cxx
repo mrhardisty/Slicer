@@ -109,9 +109,15 @@ void MergeImageGeneric2(
     vtkGenericWarningMacro("vtkOrientedImageDataResample::MergeImageGeneric: Modifier image pointer is invalid");
     return;
     }
+
+  bool baseImageModified = false;
+
   // Loop through output pixels
   // There is difference in only one line between min/max computation but the comparison
   // is performed for each pixel, so it is faster to make the conditional expression in the outer loop.
+  // Looping is performed in two step: first we just check if any of the pixels have to be changed,
+  // if we find any, then we set baseImageModified flag and to the second loop without need to set
+  // baseImageModified flag again (setting a flag in a hot loop may impact speed).
   if (operation == vtkOrientedImageDataResample::OPERATION_MAXIMUM)
     {
     for (vtkIdType idxZ = 0; idxZ <= maxZ; idxZ++)
@@ -123,6 +129,7 @@ void MergeImageGeneric2(
           if (*modifierImagePtr > *baseImagePtr)
             {
             *baseImagePtr = *modifierImagePtr;
+            baseImageModified = true;
             }
           baseImagePtr++;
           modifierImagePtr++;
@@ -145,6 +152,7 @@ void MergeImageGeneric2(
           if (*modifierImagePtr < *baseImagePtr)
             {
             *baseImagePtr = *modifierImagePtr;
+            baseImageModified = true;
             }
           baseImagePtr++;
           modifierImagePtr++;
@@ -168,16 +176,21 @@ void MergeImageGeneric2(
           if (*modifierImagePtr > maskThreshold)
             {
             *baseImagePtr = fillValueBaseImageType;
+            baseImageModified = true;
             }
           baseImagePtr++;
           modifierImagePtr++;
-          }
+        }
         baseImagePtr += baseIncY;
         modifierImagePtr += modifierIncY;
         }
       baseImagePtr += baseIncZ;
       modifierImagePtr += modifierIncZ;
       }
+    }
+  if (baseImageModified)
+    {
+    baseImage->Modified();
     }
 }
 
@@ -694,6 +707,59 @@ void vtkOrientedImageDataResample::TransformExtent(const int inputExtent[6], vtk
 }
 
 //----------------------------------------------------------------------------
+void vtkOrientedImageDataResample::TransformBounds(const double inputBounds[6], vtkAbstractTransform* inputToOutputTransform, double outputBounds[6])
+{
+  if (!inputToOutputTransform)
+    {
+    return;
+    }
+
+  // Apply transform on all eight corners and determine output extent based on these transformed corners
+  outputBounds[0] = VTK_DOUBLE_MAX;
+  outputBounds[1] = VTK_DOUBLE_MIN;
+  outputBounds[2] = VTK_DOUBLE_MAX;
+  outputBounds[3] = VTK_DOUBLE_MIN;
+  outputBounds[4] = VTK_DOUBLE_MAX;
+  outputBounds[5] = VTK_DOUBLE_MIN;
+  double outputBoxCorner[3];
+  for (int i = 0; i<2; ++i)
+    {
+    for (int j = 0; j<2; ++j)
+      {
+      for (int k = 0; k<2; ++k)
+        {
+        double inputBoxCorner[3] = { inputBounds[i], inputBounds[2 + j], inputBounds[4 + k] };
+        inputToOutputTransform->TransformPoint(inputBoxCorner, outputBoxCorner);
+        if (outputBoxCorner[0] < outputBounds[0])
+          {
+          outputBounds[0] = outputBoxCorner[0];
+          }
+        if (outputBoxCorner[0] > outputBounds[1])
+          {
+          outputBounds[1] = outputBoxCorner[0];
+          }
+        if (outputBoxCorner[1] < outputBounds[2])
+          {
+          outputBounds[2] = outputBoxCorner[1];
+          }
+        if (outputBoxCorner[1] > outputBounds[3])
+          {
+          outputBounds[3] = outputBoxCorner[1];
+          }
+        if (outputBoxCorner[2] < outputBounds[4])
+          {
+          outputBounds[4] = outputBoxCorner[2];
+          }
+        if (outputBoxCorner[2] > outputBounds[5])
+          {
+          outputBounds[5] = outputBoxCorner[2];
+          }
+        }
+      }
+    }
+}
+
+//----------------------------------------------------------------------------
 void vtkOrientedImageDataResample::TransformOrientedImageDataBounds(vtkOrientedImageData* image, vtkAbstractTransform* transform, double transformedBounds[6])
 {
   if (!image || !transform)
@@ -902,8 +968,13 @@ bool vtkOrientedImageDataResample::MergeImage(
     int operation,
     const int extent[6]/*=0*/,
     int maskThreshold /*=0*/,
-    int fillValue /*=1*/)
+    int fillValue /*=1*/,
+    bool *outputModified /*=NULL*/)
 {
+  if (outputModified != NULL)
+    {
+    (*outputModified) = false;
+    }
   if (!inputImage || !imageToAppend || !outputImage)
     {
     return false;
@@ -919,6 +990,7 @@ bool vtkOrientedImageDataResample::MergeImage(
     vtkGenericWarningMacro("vtkOrientedImageDataResample::MergeImage: Failed to pad segment labelmap");
     return false;
     }
+  vtkMTimeType outputImageMTimeBefore = outputImage->GetMTime();
   switch (inputImage->GetScalarType())
     {
     vtkTemplateMacro(MergeImageGeneric<VTK_TT>(
@@ -931,6 +1003,11 @@ bool vtkOrientedImageDataResample::MergeImage(
   default:
     vtkGenericWarningMacro("vtkOrientedImageDataResample::MergeImage: Unknown ScalarType");
     return false;
+    }
+  vtkMTimeType outputImageMTimeAfter = outputImage->GetMTime();
+  if (outputModified != NULL)
+    {
+    (*outputModified) = (outputImageMTimeBefore<outputImageMTimeAfter);
     }
   return true;
 }

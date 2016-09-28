@@ -19,9 +19,15 @@ class ScreenCapture(ScriptedLoadableModule):
     self.parent.categories = ["Utilities"]
     self.parent.dependencies = []
     self.parent.contributors = ["Andras Lasso (PerkLab Queen's University)"]
-    self.parent.helpText = """Capture image sequences from 2D and 3D viewers."""
-    self.parent.acknowledgementText = """This work was was funded by Cancer Care Ontario
- and the Ontario Consortium for Adaptive Interventions in Radiation Oncology (OCAIRO)"""
+    self.parent.helpText = """
+This module captures image sequences and videos
+from dynamic contents shown in 3D and slice viewers.
+"""
+    self.parent.helpText += self.getDefaultModuleDocumentationLink()
+    self.parent.acknowledgementText = """
+This work was was funded by Cancer Care Ontario
+and the Ontario Consortium for Adaptive Interventions in Radiation Oncology (OCAIRO)
+"""
 
 #
 # ScreenCaptureWidget
@@ -42,6 +48,7 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     self.logic.logCallback = self.addLog
     self.viewNodeType = None
     self.animationMode = None
+    self.createdOutputFile = None
 
     # Instantiate and connect widgets ...
 
@@ -91,27 +98,18 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     inputFormLayout.addRow(self.sliceEndOffsetSliderLabel, self.sliceEndOffsetSliderWidget)
 
     # 3D start rotation
-    self.startRotationSliderLabel = qt.QLabel("Start rotation angle:")
-    self.startRotationSliderWidget = ctk.ctkSliderWidget()
-    self.startRotationSliderWidget.singleStep = 5
-    self.startRotationSliderWidget.minimum = 0
-    self.startRotationSliderWidget.maximum = 180
-    self.startRotationSliderWidget.value = 180
-    self.startRotationSliderWidget.setToolTip("Rotation angle for the first image, relative to current orientation.")
-    inputFormLayout.addRow(self.startRotationSliderLabel, self.startRotationSliderWidget)
-
-    # 3D end rotation
-    self.endRotationSliderLabel = qt.QLabel("End rotation angle:")
-    self.endRotationSliderWidget = ctk.ctkSliderWidget()
-    self.endRotationSliderWidget.singleStep = 5
-    self.endRotationSliderWidget.minimum = 0
-    self.endRotationSliderWidget.maximum = 180
-    self.endRotationSliderWidget.value = 180
-    self.endRotationSliderWidget.setToolTip("Rotation angle for the last image, relative to current orientation.")
-    inputFormLayout.addRow(self.endRotationSliderLabel, self.endRotationSliderWidget)
+    self.rotationSliderLabel = qt.QLabel("Rotation range:")
+    self.rotationSliderWidget = ctk.ctkRangeWidget()
+    self.rotationSliderWidget.singleStep = 5
+    self.rotationSliderWidget.minimum = -180
+    self.rotationSliderWidget.maximum = 180
+    self.rotationSliderWidget.minimumValue = -180
+    self.rotationSliderWidget.maximumValue = 180
+    self.rotationSliderWidget.setToolTip("View rotation range, relative to current view orientation.")
+    inputFormLayout.addRow(self.rotationSliderLabel, self.rotationSliderWidget)
 
     # Sequence browser node selector
-    self.sequenceBrowserNodeSelectorLabel = qt.QLabel("End rotation angle:")
+    self.sequenceBrowserNodeSelectorLabel = qt.QLabel("Sequence:")
     self.sequenceBrowserNodeSelectorWidget = slicer.qMRMLNodeComboBox()
     self.sequenceBrowserNodeSelectorWidget.nodeTypes = ["vtkMRMLSequenceBrowserNode"]
     self.sequenceBrowserNodeSelectorWidget.addEnabled = False
@@ -133,7 +131,6 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     # Sequence end index
     self.sequenceEndItemIndexLabel = qt.QLabel("End index:")
     self.sequenceEndItemIndexWidget = ctk.ctkSliderWidget()
-    self.sequenceEndItemIndexWidget.singleStep = 10
     self.sequenceEndItemIndexWidget.minimum = 0
     self.sequenceEndItemIndexWidget.decimals = 0
     self.sequenceEndItemIndexWidget.setToolTip("Last item in the sequence to capture.")
@@ -151,7 +148,7 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     self.numberOfStepsSliderWidget = ctk.ctkSliderWidget()
     self.numberOfStepsSliderWidget.singleStep = 10
     self.numberOfStepsSliderWidget.minimum = 2
-    self.numberOfStepsSliderWidget.maximum = 150
+    self.numberOfStepsSliderWidget.maximum = 600
     self.numberOfStepsSliderWidget.value = 31
     self.numberOfStepsSliderWidget.decimals = 0
     self.numberOfStepsSliderWidget.setToolTip("Number of images extracted between start and stop positions.")
@@ -166,14 +163,24 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
       defaultOutputPath = os.path.abspath(os.path.join(slicer.app.defaultScenePath,'SlicerCapture'))
       self.outputDirSelector.setCurrentPath(defaultOutputPath)
 
-    self.videoExportCheckBox = qt.QCheckBox()
+    self.videoExportCheckBox = qt.QCheckBox(" ")
     self.videoExportCheckBox.checked = False
     self.videoExportCheckBox.setToolTip("If checked, exported images will be written as a video file."
       " Requires setting of ffmpeg executable path in Advanced section.")
-    outputFormLayout.addRow("Video export:", self.videoExportCheckBox)
+
+    self.videoFormatWidget = qt.QComboBox()
+    self.videoFormatWidget.enabled = False
+    self.videoFormatWidget.setSizePolicy(qt.QSizePolicy.Expanding, qt.QSizePolicy.Preferred)
+    for videoFormatPreset in self.logic.videoFormatPresets:
+      self.videoFormatWidget.addItem(videoFormatPreset["name"])
+
+    hbox = qt.QHBoxLayout()
+    hbox.addWidget(self.videoExportCheckBox)
+    hbox.addWidget(self.videoFormatWidget)
+    outputFormLayout.addRow("Video export:", hbox)
 
     self.videoFileNameWidget = qt.QLineEdit()
-    self.videoFileNameWidget.setToolTip("String that defines file name, type, and numbering scheme. Default: capture.avi.")
+    self.videoFileNameWidget.setToolTip("String that defines file name and type.")
     self.videoFileNameWidget.text = "SlicerCapture.avi"
     self.videoFileNameWidget.setEnabled(False)
     outputFormLayout.addRow("Video file name:", self.videoFileNameWidget)
@@ -198,44 +205,44 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     outputFormLayout.addRow(self.advancedCollapsibleButton)
     advancedFormLayout = qt.QFormLayout(self.advancedCollapsibleButton)
 
+    ffmpegPath = self.logic.getFfmpegPath()
+    self.ffmpegPathSelector = ctk.ctkPathLineEdit()
+    self.ffmpegPathSelector.setCurrentPath(ffmpegPath)
+    self.ffmpegPathSelector.nameFilters = [self.logic.getFfmpegExecutableFilename()]
+    self.ffmpegPathSelector.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Preferred)
+    self.ffmpegPathSelector.setToolTip("Set the path to ffmpeg executable. Download from: https://www.ffmpeg.org/")
+    advancedFormLayout.addRow("ffmpeg executable:", self.ffmpegPathSelector)
+
+    self.videoExportFfmpegWarning = qt.QLabel('<qt><b><font color="red">Set valid ffmpeg executable path! '+
+      '<a href="http://wiki.slicer.org/slicerWiki/index.php/Documentation/Nightly/Modules/ScreenCapture#Setting_up_ffmpeg">Help...</a></font></b></qt>')
+    self.videoExportFfmpegWarning.connect('linkActivated(QString)', self.openURL)
+    self.videoExportFfmpegWarning.setVisible(False)
+    advancedFormLayout.addRow("", self.videoExportFfmpegWarning)
+
+    self.extraVideoOptionsWidget = qt.QLineEdit()
+    self.extraVideoOptionsWidget.setToolTip('Additional video conversion options passed to ffmpeg. Parameters -i (input files), -y'
+      +'(overwrite without asking), -r (frame rate), -start_number are specified by the module and therefore'
+      +'should not be included in this list.')
+    advancedFormLayout.addRow("Video extra options:", self.extraVideoOptionsWidget)
+
     self.fileNamePatternWidget = qt.QLineEdit()
     self.fileNamePatternWidget.setToolTip(
       "String that defines file name, type, and numbering scheme. Default: image%05d.png.")
     self.fileNamePatternWidget.text = "image_%05d.png"
     advancedFormLayout.addRow("Image file name pattern:", self.fileNamePatternWidget)
 
-    ffmpegPath = self.logic.getFfmpegPath()
-    self.ffmpegPathSelector = ctk.ctkPathLineEdit()
-    self.ffmpegPathSelector.setCurrentPath(ffmpegPath)
-    self.ffmpegPathSelector.nameFilters = ['ffmpeg.exe', 'ffmpeg']
-    self.ffmpegPathSelector.setMaximumWidth(300)
-    self.ffmpegPathSelector.setToolTip("Set the path to ffmpeg executable. Download from: https://www.ffmpeg.org/")
-    advancedFormLayout.addRow("ffmpeg executable:", self.ffmpegPathSelector)
-
-    self.extraVideoOptionsWidget = qt.QComboBox()
-    self.extraVideoOptionsWidget.addItem("-c:v mpeg4 -qscale:v 5")
-    self.extraVideoOptionsWidget.addItem("-c:v libx264 -preset veryslow -qp 0")
-    self.extraVideoOptionsWidget.addItem("-f mp4 -vcodec libx264 -pix_fmt yuv420p")
-    self.extraVideoOptionsWidget.setEditable(True)
-    self.extraVideoOptionsWidget.setToolTip(
-      '<html>\n'
-      '  <p>Additional video conversion options passed to ffmpeg.</p>'
-      '  <p><b>Examples:</b>'
-      '  <ul>'
-      '    <li><b>MPEG4: </b>-c:v mpeg4 -qscale:v 5</li>'
-      '    <li><b>H264: </b>-c:v libx264 -preset veryslow -qp 0</li>'
-      '    <li><b>Quicktime: </b>-f mp4 -vcodec libx264 -pix_fmt yuv420p</li>'
-      '  </ul></p>'
-      '  <p>See more encoding options at:'
-      '  <i>https://trac.ffmpeg.org/wiki/Encode/H.264</i> and'
-      '  <i>https://trac.ffmpeg.org/wiki/Encode/MPEG-4</i></p>'
-      '</html>')
-    advancedFormLayout.addRow("Video extra options:", self.extraVideoOptionsWidget)
-
     # Capture button
     self.captureButton = qt.QPushButton("Capture")
     self.captureButton.toolTip = "Capture slice sweep to image sequence."
-    outputFormLayout.addRow(self.captureButton)
+    self.showCreatedOutputFileButton = qt.QPushButton()
+    self.showCreatedOutputFileButton.setIcon(qt.QIcon(':Icons/Go.png'))
+    self.showCreatedOutputFileButton.setMaximumWidth(60)
+    self.showCreatedOutputFileButton.enabled = False
+    self.showCreatedOutputFileButton.toolTip = "Show created output file."
+    hbox = qt.QHBoxLayout()
+    hbox.addWidget(self.captureButton)
+    hbox.addWidget(self.showCreatedOutputFileButton)
+    outputFormLayout.addRow(hbox)
 
     self.statusLabel = qt.QPlainTextEdit()
     self.statusLabel.setTextInteractionFlags(qt.Qt.TextSelectableByMouse)
@@ -244,10 +251,11 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
 
     #
     # Add vertical spacer
-    #self.layout.addStretch(1)
+    # self.layout.addStretch(1)
 
     # connections
     self.captureButton.connect('clicked(bool)', self.onCaptureButton)
+    self.showCreatedOutputFileButton.connect('clicked(bool)', self.onShowCreatedOutputFile)
     self.viewNodeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.updateViewOptions)
     self.animationModeWidget.connect("currentIndexChanged(int)", self.updateViewOptions)
     self.sliceStartOffsetSliderWidget.connect('valueChanged(double)', self.setSliceOffset)
@@ -258,8 +266,29 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     self.videoExportCheckBox.connect('toggled(bool)', self.fileNamePatternWidget, 'setDisabled(bool)')
     self.videoExportCheckBox.connect('toggled(bool)', self.videoFileNameWidget, 'setEnabled(bool)')
     self.videoExportCheckBox.connect('toggled(bool)', self.videoLengthSliderWidget, 'setEnabled(bool)')
+    self.videoExportCheckBox.connect('toggled(bool)', self.videoFormatWidget, 'setEnabled(bool)')
+    self.videoFormatWidget.connect("currentIndexChanged(int)", self.updateVideoFormat)
 
+    self.updateVideoFormat(0)
     self.updateViewOptions()
+
+  def openURL(self, URL):
+    qt.QDesktopServices().openUrl(qt.QUrl(URL))
+    QDesktopServices
+
+  def onShowCreatedOutputFile(self):
+    if not self.createdOutputFile:
+      return
+    qt.QDesktopServices().openUrl(qt.QUrl("file:///"+self.createdOutputFile, qt.QUrl.TolerantMode));
+
+  def updateVideoFormat(self, selectionIndex):
+    videoFormatPreset = self.logic.videoFormatPresets[selectionIndex]
+
+    import os
+    filenameExt = os.path.splitext(self.videoFileNameWidget.text)
+    self.videoFileNameWidget.text = filenameExt[0] + "." + videoFormatPreset["fileExtension"]
+
+    self.extraVideoOptionsWidget.text = videoFormatPreset["extraVideoOptions"]
 
   def currentViewNodeType(self):
     viewNode = self.viewNodeSelector.currentNode()
@@ -325,10 +354,8 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
       self.sliceEndOffsetSliderWidget.blockSignals(wasBlocked)
 
     # 3D rotation
-    self.startRotationSliderLabel.visible = (self.animationMode == "3D rotation")
-    self.startRotationSliderWidget.visible = (self.animationMode == "3D rotation")
-    self.endRotationSliderLabel.visible = (self.animationMode == "3D rotation")
-    self.endRotationSliderWidget.visible = (self.animationMode == "3D rotation")
+    self.rotationSliderLabel.visible = (self.animationMode == "3D rotation")
+    self.rotationSliderWidget.visible = (self.animationMode == "3D rotation")
 
     # Sequence
     self.sequenceBrowserNodeSelectorLabel.visible = (self.animationMode == "sequence")
@@ -372,7 +399,6 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
   def onCaptureButton(self):
     self.logic.setFfmpegPath(self.ffmpegPathSelector.currentPath)
 
-    slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
     self.statusLabel.plainText = ''
 
     videoOutputRequested = self.videoExportCheckBox.checked
@@ -380,9 +406,31 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
     numberOfSteps = int(self.numberOfStepsSliderWidget.value)
     outputDir = self.outputDirSelector.currentPath
 
+    self.videoExportFfmpegWarning.setVisible(False)
+    if videoOutputRequested:
+      if not self.logic.isFfmpegPathValid():
+        # ffmpeg not found, try to automatically find it at common locations
+        self.logic.findFfmpeg()
+      if not self.logic.isFfmpegPathValid() and os.name == 'nt': # TODO: implement download for Linux/MacOS?
+        # ffmpeg not found, offer downloading it
+        if slicer.util.confirmOkCancelDisplay(
+          'Video encoder not detected on your system. '
+          'Download ffmpeg video encoder?',
+          windowTitle='Download confirmation'):
+          if not self.logic.ffmpegDownload():
+            slicer.util.errorDisplay("ffmpeg download failed")
+      if not self.logic.isFfmpegPathValid():
+        # still not found, user has to specify path manually
+        self.videoExportFfmpegWarning.setVisible(True)
+        self.advancedCollapsibleButton.collapsed = False
+        return
+      self.ffmpegPathSelector.currentPath = self.logic.getFfmpegPath()
+
     # Need to create a new random file pattern if video output is requested to make sure that new image files are not mixed up with
     # existing files in the output directory
     imageFileNamePattern = self.logic.getRandomFilePattern() if videoOutputRequested else self.fileNamePatternWidget.text
+
+    slicer.app.setOverrideCursor(qt.Qt.WaitCursor)
 
     try:
       if self.animationModeWidget.currentText == "slice sweep":
@@ -391,8 +439,8 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
       elif self.animationModeWidget.currentText == "slice fade":
         self.logic.captureSliceFade(viewNode, numberOfSteps, outputDir, imageFileNamePattern)
       elif self.animationModeWidget.currentText == "3D rotation":
-        self.logic.capture3dViewRotation(viewNode, self.startRotationSliderWidget.value,
-          self.endRotationSliderWidget.value, numberOfSteps, outputDir, imageFileNamePattern)
+        self.logic.capture3dViewRotation(viewNode, self.rotationSliderWidget.minimumValue,
+          self.rotationSliderWidget.maximumValue, numberOfSteps, outputDir, imageFileNamePattern)
       elif self.animationModeWidget.currentText == "sequence":
         self.logic.captureSequence(viewNode, self.sequenceBrowserNodeSelectorWidget.currentNode(),
           self.sequenceStartItemIndexWidget.value, self.sequenceEndItemIndexWidget.value,
@@ -403,7 +451,7 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
       if videoOutputRequested:
         fps = numberOfSteps / self.videoLengthSliderWidget.value
         try:
-          self.logic.createVideo(fps, self.extraVideoOptionsWidget.currentText,
+          self.logic.createVideo(fps, self.extraVideoOptionsWidget.text,
             outputDir, imageFileNamePattern, self.videoFileNameWidget.text)
         except Exception as e:
           self.logic.deleteTemporaryFiles(outputDir, imageFileNamePattern, numberOfSteps)
@@ -411,10 +459,14 @@ class ScreenCaptureWidget(ScriptedLoadableModuleWidget):
         self.logic.deleteTemporaryFiles(outputDir, imageFileNamePattern, numberOfSteps)
 
       self.addLog("Done.")
+      self.createdOutputFile = os.path.join(outputDir, self.videoFileNameWidget.text) if videoOutputRequested else outputDir
+      self.showCreatedOutputFileButton.enabled = True
     except Exception as e:
       self.addLog("Unexpected error: {0}".format(e.message))
       import traceback
       traceback.print_exc()
+      self.showCreatedOutputFileButton.enabled = False
+      self.createdOutputFile = None
     slicer.app.restoreOverrideCursor()
 
 #
@@ -434,6 +486,14 @@ class ScreenCaptureLogic(ScriptedLoadableModuleLogic):
   def __init__(self):
     self.logCallback = None
 
+    self.videoFormatPresets = [
+      {"name": "H.264",                    "fileExtension": "mp4", "extraVideoOptions": "-codec libx264 -preset slower -pix_fmt yuv420p"},
+      {"name": "H.264 (high-quality)",     "fileExtension": "mp4", "extraVideoOptions": "-codec libx264 -preset slower -crf 18 -pix_fmt yuv420p"},
+      {"name": "MPEG-4",                   "fileExtension": "mp4", "extraVideoOptions": "-codec mpeg4 -qscale 5"},
+      {"name": "MPEG-4 (high-quality)",    "fileExtension": "mp4", "extraVideoOptions": "-codec mpeg4 -qscale 3"},
+      {"name": "Animated GIF",             "fileExtension": "gif", "extraVideoOptions": "-filter_complex palettegen,[v]paletteuse"},
+      {"name": "Animated GIF (grayscale)", "fileExtension": "gif", "extraVideoOptions": "-vf format=gray"} ]
+
   def addLog(self, text):
     logging.info(text)
     if self.logCallback:
@@ -446,6 +506,84 @@ class ScreenCaptureLogic(ScriptedLoadableModuleLogic):
     randomString = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(numberOfRandomChars))
     filePathPattern = "tmp-"+randomString+"-%05d.png"
     return filePathPattern
+
+  def isFfmpegPathValid(self):
+    import os
+    ffmpegPath = self.getFfmpegPath()
+    return os.path.isfile(ffmpegPath)
+
+  def getDownloadedFfmpegDirectory(self):
+    return os.path.dirname(slicer.app.slicerUserSettingsFilePath)+'/ffmpeg'
+
+  def getFfmpegExecutableFilename(self):
+    if os.name == 'nt':
+      return 'ffmpeg.exe'
+    else:
+      return 'ffmpeg'
+
+  def findFfmpeg(self):
+    # Try to find the executable at specific paths
+    commonFfmpegPaths = [
+      '/usr/local/bin/ffmpeg'
+      ]
+    for ffmpegPath in commonFfmpegPaths:
+      if os.path.isfile(ffmpegPath):
+        # found one
+        self.setFfmpegPath(ffmpegPath)
+        return True
+    # Search for the executable in directories
+    commonFfmpegDirs = [
+      self.getDownloadedFfmpegDirectory()
+      ]
+    for ffmpegDir in commonFfmpegDirs:
+      if self.findFfmpegInDirectory(ffmpegDir):
+        # found it
+        return True
+    # Not found
+    return False
+
+  def findFfmpegInDirectory(self, ffmpegDir):
+    ffmpegExecutableFilename = self.getFfmpegExecutableFilename()
+    for dirpath, dirnames, files in os.walk(ffmpegDir):
+      for name in files:
+        if name==ffmpegExecutableFilename:
+          ffmpegExecutablePath = (dirpath + '/' + name).replace('\\','/')
+          self.setFfmpegPath(ffmpegExecutablePath)
+          return True
+    return False
+
+  def ffmpegDownload(self):
+    if os.name == 'nt':
+      url = 'https://ffmpeg.zeranoe.com/builds/win64/shared/ffmpeg-20160927-92de2c2-win64-shared.zip'
+    else:
+      # TODO: implement downloading for Linux/MacOS?
+      return False
+
+    qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+    success = True
+    try:
+      ffmpegTargetDirectory = self.getDownloadedFfmpegDirectory()
+      import urllib
+      filePath = slicer.app.temporaryPath + '/ffmpeg-package.zip'
+
+      for i in range(2): # try download&unzip twice, second time force download
+        if not os.path.exists(filePath) or os.stat(filePath).st_size == 0\
+          or i==1: # force download
+          logging.info('Requesting download ffmpeg from %s...\n' % url)
+          urllib.urlretrieve(url, filePath)
+
+        logging.info('Unzipping ffmpeg')
+        qt.QDir().mkpath(ffmpegTargetDirectory)
+        slicer.app.applicationLogic().Unzip(filePath, ffmpegTargetDirectory)
+        success = self.findFfmpegInDirectory(ffmpegTargetDirectory)
+        if success:
+          break
+
+    except:
+      success = False
+
+    qt.QApplication.restoreOverrideCursor()
+    return success
 
   def getFfmpegPath(self):
     settings = qt.QSettings()
@@ -609,12 +747,12 @@ class ScreenCaptureLogic(ScriptedLoadableModuleLogic):
     # Save original orientation and go to start orientation
     originalPitchRollYawIncrement = renderView.pitchRollYawIncrement
     originalYawDirection = renderView.yawDirection
-    renderView.setPitchRollYawIncrement(startRotation)
+    renderView.setPitchRollYawIncrement(-startRotation)
     renderView.yawDirection = renderView.YawLeft
     renderView.yaw()
 
     # Rotate step-by-step
-    rotationStepSize = (endRotation + startRotation) / (numberOfImages - 1)
+    rotationStepSize = (endRotation - startRotation) / (numberOfImages - 1)
     renderView.setPitchRollYawIncrement(rotationStepSize)
     renderView.yawDirection = renderView.YawRight
     for offsetIndex in range(numberOfImages):
@@ -675,10 +813,10 @@ class ScreenCaptureLogic(ScriptedLoadableModuleLogic):
     ffmpegParams += filter(None, extraOptions.split(' '))
     ffmpegParams.append(outputVideoFilePath)
 
-    logging.debug("ffmpeg parameters: "+repr(ffmpegParams))
+    self.addLog("Start ffmpeg:\n"+' '.join(ffmpegParams))
 
     import subprocess
-    p = subprocess.Popen(ffmpegParams, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p = subprocess.Popen(ffmpegParams, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=outputDir)
     output = p.communicate()
     if p.returncode != 0:
       self.addLog("ffmpeg error output: " + output[1])
@@ -772,6 +910,6 @@ class ScreenCaptureTest(ScriptedLoadableModuleTest):
     self.delayDisplay("Testing 3D view rotation")
     viewNode = slicer.util.getNode('vtkMRMLViewNode1')
     self.assertIsNotNone(viewNode)
-    self.logic.capture3dViewRotation(viewNode, 180, 180, self.numberOfImages, self.tempDir, self.imageFileNamePattern)
+    self.logic.capture3dViewRotation(viewNode, -180, 180, self.numberOfImages, self.tempDir, self.imageFileNamePattern)
     self.verifyAndDeleteWrittenFiles()
     self.delayDisplay('Testing 3D view rotation completed successfully')

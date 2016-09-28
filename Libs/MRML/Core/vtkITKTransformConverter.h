@@ -341,11 +341,14 @@ bool vtkITKTransformConverter::SetVTKBSplineParametersFromITKGeneric(
     return false;
     }
 
-  typename BSplineTransformType::Pointer bsplineItk = dynamic_cast< BSplineTransformType* >( warpTransformItk.GetPointer() );
-  if (!bsplineItk.GetPointer())
+  typename BSplineTransformType::Pointer bsplineItk = BSplineTransformType::New();
+  std::string warpTransformItkName = warpTransformItk->GetNameOfClass();
+  std::string requestedWarpTransformItkName = bsplineItk->GetNameOfClass();
+  if (warpTransformItkName != requestedWarpTransformItkName)
     {
     return false;
     }
+  bsplineItk = static_cast< BSplineTransformType* >( warpTransformItk.GetPointer() );
 
   // now get the fixed parameters and map them to the vtk analogs
 

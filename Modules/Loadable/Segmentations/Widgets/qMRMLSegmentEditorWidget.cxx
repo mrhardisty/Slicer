@@ -2,7 +2,8 @@
 
   Program: 3D Slicer
 
-  Copyright (c) Kitware Inc.
+  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
+  Queen's University, Kingston, ON, Canada. All Rights Reserved.
 
   See COPYRIGHT.txt
   or http://www.slicer.org/copyright/copyright.txt for details.
@@ -28,6 +29,7 @@
 #include "vtkMRMLSegmentationDisplayNode.h"
 #include "vtkMRMLSegmentEditorNode.h"
 #include "vtkSegmentation.h"
+#include "vtkSegmentationHistory.h"
 #include "vtkSegment.h"
 #include "vtkOrientedImageData.h"
 #include "vtkOrientedImageDataResample.h"
@@ -141,10 +143,6 @@ public:
   /// Select first segment in table view
   void selectFirstSegment();
 
-  /// Show selected segment in 2D views as fill only, all the others as outline only
-  /// for per-segment effects, otherwise show all segments as fill only
-  void showSelectedSegment();
-
   /// Enable or disable effects and their options based on input selection
   void updateEffectsEnabled();
 
@@ -176,6 +174,7 @@ public:
   vtkWeakPointer<vtkMRMLSegmentEditorNode> ParameterSetNode;
 
   vtkWeakPointer<vtkMRMLSegmentationNode> SegmentationNode;
+  vtkSmartPointer<vtkSegmentationHistory> SegmentationHistory;
 
   vtkWeakPointer<vtkMRMLScalarVolumeNode> MasterVolumeNode;
 
@@ -237,6 +236,7 @@ qMRMLSegmentEditorWidgetPrivate::qMRMLSegmentEditorWidgetPrivate(qMRMLSegmentEdi
   this->MaskLabelmap = vtkOrientedImageData::New();
   this->SelectedSegmentLabelmap = vtkOrientedImageData::New();
   this->ReferenceGeometryImage = vtkOrientedImageData::New();
+  this->SegmentationHistory = vtkSmartPointer<vtkSegmentationHistory>::New();
 }
 
 //-----------------------------------------------------------------------------
@@ -302,6 +302,8 @@ void qMRMLSegmentEditorWidgetPrivate::init()
     q, SLOT(onMasterVolumeNodeChanged(vtkMRMLNode*)) );
   QObject::connect( this->SegmentsTableView, SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
     q, SLOT(onSegmentSelectionChanged(QItemSelection,QItemSelection)) );
+  QObject::connect( this->SegmentsTableView, SIGNAL(segmentAboutToBeModified(QString)),
+    q, SLOT(saveStateForUndo()) );
   QObject::connect( this->AddSegmentButton, SIGNAL(clicked()), q, SLOT(onAddSegment()) );
   QObject::connect( this->RemoveSegmentButton, SIGNAL(clicked()), q, SLOT(onRemoveSegment()) );
   QObject::connect( this->CreateSurfaceButton, SIGNAL(toggled(bool)), q, SLOT(onCreateSurfaceToggled(bool)) );
@@ -310,6 +312,12 @@ void qMRMLSegmentEditorWidgetPrivate::init()
   QObject::connect( this->MasterVolumeIntensityMaskCheckBox, SIGNAL(toggled(bool)), q, SLOT(onMasterVolumeIntensityMaskChecked(bool)));
   QObject::connect( this->MasterVolumeIntensityMaskRangeWidget, SIGNAL(valuesChanged(double,double)), q, SLOT(onMasterVolumeIntensityMaskRangeChanged(double,double)));
   QObject::connect( this->OverwriteModeComboBox, SIGNAL(currentIndexChanged(int)), q, SLOT(onOverwriteModeChanged(int)));
+
+  QObject::connect( this->UndoButton, SIGNAL(clicked()), q, SLOT(onUndo()));
+  QObject::connect( this->RedoButton, SIGNAL(clicked()), q, SLOT(onRedo()));
+
+  q->qvtkConnect(this->SegmentationHistory, vtkCommand::ModifiedEvent,
+    q, SLOT(onSegmentationHistoryChanged()));
 
   // Widget properties
   this->SegmentsTableView->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -421,7 +429,8 @@ void qMRMLSegmentEditorWidgetPrivate::initializeEffect(qSlicerSegmentEditorAbstr
   // introducing a direct dependency of the effect on the widget.
   effect->setCallbackSlots(q,
     SLOT(setActiveEffectByName(QString)),
-    SLOT(updateVolume(void*,bool&)));
+    SLOT(updateVolume(void*,bool&)),
+    SLOT(saveStateForUndo()));
 
   effect->setVolumes(this->AlignedMasterVolume, this->ModifierLabelmap, this->MaskLabelmap, this->SelectedSegmentLabelmap, this->ReferenceGeometryImage);
 
@@ -778,14 +787,6 @@ void qMRMLSegmentEditorWidgetPrivate::selectFirstSegment()
 }
 
 //-----------------------------------------------------------------------------
-void qMRMLSegmentEditorWidgetPrivate::showSelectedSegment()
-{
-  // Here we could change the selected segment's display.
-  // It seems that it is not necessary for now, but keep the method
-  // as a placeholder for a while.
-}
-
-//-----------------------------------------------------------------------------
 void qMRMLSegmentEditorWidgetPrivate::updateEffectsEnabled()
 {
   if (!this->ParameterSetNode)
@@ -800,6 +801,8 @@ void qMRMLSegmentEditorWidgetPrivate::updateEffectsEnabled()
   this->OptionsGroupBox->setEnabled(masterVolumeSelected);
 
   // Enable only non-per-segment effects if no segment is selected, otherwise enable all effects
+  vtkMRMLSegmentationNode* segmentationNode = this->ParameterSetNode->GetSegmentationNode();
+  bool segmentAvailable = segmentationNode && (segmentationNode->GetSegmentation()->GetNumberOfSegments() > 0);
   QString selectedSegmentID(this->ParameterSetNode->GetSelectedSegmentID());
   bool segmentSelected = !selectedSegmentID.isEmpty();
   QList<QAbstractButton*> effectButtons = this->EffectButtonGroup.buttons();
@@ -812,7 +815,7 @@ void qMRMLSegmentEditorWidgetPrivate::updateEffectsEnabled()
       // NULL effect
       continue;
       }
-    effectButton->setEnabled(segmentSelected || !effect->perSegment());
+    effectButton->setEnabled(segmentAvailable && (segmentSelected || !effect->perSegment()));
     }
 }
 
@@ -953,6 +956,9 @@ void qMRMLSegmentEditorWidget::updateWidgetFromMRML()
   d->OverwriteModeComboBox->setCurrentIndex(overwriteModeIndex);
   d->OverwriteModeComboBox->blockSignals(wasBlocked);
 
+  // Segmentation object might have been replaced, update selected segment
+  onSegmentAddedRemoved();
+
   // Effects section
 
   updateWidgetFromEffect();
@@ -1061,8 +1067,8 @@ void qMRMLSegmentEditorWidget::updateWidgetFromSegmentationNode()
   if (segmentationNode != d->SegmentationNode)
     {
     // Connect events needed to update closed surface button
-    qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::RepresentationCreated, this, SLOT(onSegmentAddedRemoved()));
-    qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::RepresentationRemoved, this, SLOT(onSegmentAddedRemoved()));
+    qvtkReconnect(d->SegmentationNode, segmentationNode, vtkCommand::ModifiedEvent, this, SLOT(updateWidgetFromMRML()));
+    qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::ContainedRepresentationNamesModified, this, SLOT(onSegmentAddedRemoved()));
     qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::SegmentAdded, this, SLOT(onSegmentAddedRemoved()));
     qvtkReconnect(d->SegmentationNode, segmentationNode, vtkSegmentation::SegmentRemoved, this, SLOT(onSegmentAddedRemoved()));
     d->SegmentationNode = segmentationNode;
@@ -1128,6 +1134,8 @@ void qMRMLSegmentEditorWidget::updateWidgetFromSegmentationNode()
         }
       }
     }
+
+  d->SegmentationHistory->SetSegmentation(d->SegmentationNode ? d->SegmentationNode->GetSegmentation() : NULL);
 
   // Update closed surface button with new segmentation
   this->onSegmentAddedRemoved();
@@ -1352,19 +1360,6 @@ void qMRMLSegmentEditorWidget::updateWidgetFromEffect()
     d->OptionsGroupBox->setTitle(activeEffect->name());
     //d->OptionsGroupBox->setToolTip(activeEffect->helpText());
     d->label_EffectHelp->setText(activeEffect->helpText());
-
-    // If selected effect is not per-segment, then clear segment selection
-    // and prevent selection until a per-segment one is selected
-    if (!activeEffect->perSegment())
-      {
-      // Clear selection
-      d->SegmentsTableView->clearSelection();
-      }
-    else if (d->ActiveEffect && !d->ActiveEffect->perSegment())
-      {
-      // Select first segment if previous effect was not per-segment
-      d->selectFirstSegment();
-      }
     }
   else
     {
@@ -1399,9 +1394,6 @@ void qMRMLSegmentEditorWidget::updateWidgetFromEffect()
 
   // Set active effect
   d->ActiveEffect = activeEffect;
-
-  // Make sure the selected segment is properly shown based on selections
-  d->showSelectedSegment();
 }
 
 //-----------------------------------------------------------------------------
@@ -1614,37 +1606,25 @@ void qMRMLSegmentEditorWidget::onSegmentSelectionChanged(const QItemSelection &s
     }
 
   // Set segment ID if changed
-  d->ParameterSetNode->DisableModifiedEventOn();
   if (selectedSegmentIDs.isEmpty())
     {
     d->ParameterSetNode->SetSelectedSegmentID(NULL);
-    }
-  else
-    {
-    d->ParameterSetNode->SetSelectedSegmentID(selectedSegmentID.toLatin1().constData());
-
-    // Also de-select current effect if it is not per-segment
-    if (d->ActiveEffect && !d->ActiveEffect->perSegment())
+    // Also de-select current effect if per-segment
+    if (d->ActiveEffect && d->ActiveEffect->perSegment())
       {
       this->setActiveEffect(NULL);
       }
     }
-  d->ParameterSetNode->DisableModifiedEventOff();
+  else
+    {
+    d->ParameterSetNode->SetSelectedSegmentID(selectedSegmentID.toLatin1().constData());
+    }
 
   // Disable editing if no segment is selected
   d->updateEffectsEnabled();
 
   // Only enable remove button if a segment is selected
   d->RemoveSegmentButton->setEnabled(!selectedSegmentID.isEmpty());
-
-  // Create modifier labelmap from selected segment, using the bounds of the master volume
-  //this->updateEditedVolumes();
-  //this->updateMaskLabelmap();
-  //d->notifyEffectsOfModifierLabelmapChange();
-
-  // Show selected segment as fill only, all the others as outline only for per-segment effects,
-  // otherwise show all segments as fill only
-  d->showSelectedSegment();
 }
 
 //-----------------------------------------------------------------------------
@@ -1725,6 +1705,8 @@ void qMRMLSegmentEditorWidget::onAddSegment()
     return;
     }
 
+  d->SegmentationHistory->SaveState();
+
   // Create empty segment in current segmentation
   std::string addedSegmentID = segmentationNode->GetSegmentation()->AddEmptySegment();
 
@@ -1749,22 +1731,47 @@ void qMRMLSegmentEditorWidget::onRemoveSegment()
     }
 
   vtkMRMLSegmentationNode* segmentationNode = d->ParameterSetNode->GetSegmentationNode();
-  const char* selectedSegmentID = d->ParameterSetNode->GetSelectedSegmentID();
-  if (!segmentationNode || !selectedSegmentID)
+  std::string selectedSegmentID = (d->ParameterSetNode->GetSelectedSegmentID() ? d->ParameterSetNode->GetSelectedSegmentID() : "");
+  if (!segmentationNode || selectedSegmentID.empty())
     {
     return;
     }
 
+  d->SegmentationHistory->SaveState();
+
+  // Switch to a new valid segment now (to avoid transient state when no segments are selected
+  // as it could inactivate current effect).
+  vtkSegmentation::SegmentMap segmentMap = segmentationNode->GetSegmentation()->GetSegments();
+  if (segmentMap.size() > 1)
+    {
+    std::string newSelectedSegmentID;
+    vtkSegmentation::SegmentMap::iterator previousSegmentIt = segmentMap.begin();
+    for (vtkSegmentation::SegmentMap::iterator segmentIt = segmentMap.begin(); segmentIt != segmentMap.end(); ++segmentIt)
+      {
+      if (segmentIt->first == selectedSegmentID)
+        {
+        // found the currently selected segment
+        // use the next segment (if at the end, use the previous)
+        ++segmentIt;
+        if (segmentIt != segmentMap.end())
+          {
+          newSelectedSegmentID = segmentIt->first;
+          }
+        else
+          {
+          newSelectedSegmentID = previousSegmentIt->first;
+          }
+        break;
+        }
+      previousSegmentIt = segmentIt;
+      }
+    QStringList newSelectedSegmentIdList;
+    newSelectedSegmentIdList << QString(newSelectedSegmentID.c_str());
+    d->SegmentsTableView->setSelectedSegmentIDs(newSelectedSegmentIdList);
+    }
+
   // Remove segment
   segmentationNode->GetSegmentation()->RemoveSegment(selectedSegmentID);
-
-  // Select first segment if there is at least one segment
-  if (segmentationNode->GetSegmentation()->GetNumberOfSegments())
-    {
-    QStringList firstSegmentId;
-    firstSegmentId << QString(segmentationNode->GetSegmentation()->GetSegments().begin()->first.c_str());
-    d->SegmentsTableView->setSelectedSegmentIDs(firstSegmentId);
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -1811,8 +1818,6 @@ void qMRMLSegmentEditorWidget::onCreateSurfaceToggled(bool on)
     {
     segmentationNode->GetSegmentation()->RemoveRepresentation(
       vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
-    // Trigger display update
-    displayNode->Modified();
     }
 }
 
@@ -2060,6 +2065,16 @@ void qMRMLSegmentEditorWidget::setActiveEffectByName(QString effectName)
 }
 
 //---------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::saveStateForUndo()
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  if (d->SegmentationHistory->GetMaximumNumberOfStates() > 0)
+    {
+    d->SegmentationHistory->SaveState();
+    }
+}
+
+//---------------------------------------------------------------------------
 void qMRMLSegmentEditorWidget::updateVolume(void* volumeToUpdate, bool& success)
 {
   Q_D(qMRMLSegmentEditorWidget);
@@ -2235,4 +2250,63 @@ void qMRMLSegmentEditorWidget::setMasterVolumeNodeSelectorVisible(bool visible)
   Q_D(qMRMLSegmentEditorWidget);
   d->MRMLNodeComboBox_MasterVolume->setVisible(visible);
   d->label_MasterVolume->setVisible(visible);
+}
+
+//-----------------------------------------------------------------------------
+bool qMRMLSegmentEditorWidget::undoEnabled() const
+{
+  Q_D(const qMRMLSegmentEditorWidget);
+  return (d->UndoButton->isVisible() || d->RedoButton->isVisible());
+}
+
+//-----------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::setUndoEnabled(bool enabled)
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  if (enabled)
+    {
+    d->SegmentationHistory->RemoveAllStates();
+    }
+  d->UndoButton->setVisible(enabled);
+  d->RedoButton->setVisible(enabled);
+}
+
+//-----------------------------------------------------------------------------
+int qMRMLSegmentEditorWidget::maximumNumberOfUndoStates() const
+{
+  Q_D(const qMRMLSegmentEditorWidget);
+  return d->SegmentationHistory->GetMaximumNumberOfStates();
+}
+
+//-----------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::setMaximumNumberOfUndoStates(int maxNumberOfStates)
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  d->SegmentationHistory->SetMaximumNumberOfStates(maxNumberOfStates);
+}
+
+//-----------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::onUndo()
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  if (d->SegmentationNode == NULL)
+    {
+    return;
+    }
+  d->SegmentationHistory->RestorePreviousState();
+}
+
+//-----------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::onRedo()
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  d->SegmentationHistory->RestoreNextState();
+}
+
+//-----------------------------------------------------------------------------
+void qMRMLSegmentEditorWidget::onSegmentationHistoryChanged()
+{
+  Q_D(qMRMLSegmentEditorWidget);
+  d->UndoButton->setEnabled(d->SegmentationHistory->IsRestorePreviousStateAvailable());
+  d->RedoButton->setEnabled(d->SegmentationHistory->IsRestoreNextStateAvailable());
 }

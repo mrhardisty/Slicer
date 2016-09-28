@@ -373,10 +373,8 @@ void qSlicerSegmentEditorPaintEffectPrivate::paintApply(qMRMLWidget* viewWidget)
     return;
     }
 
-  //TODO:
-  //if self.paintCoordinates != []:
-  //  if self.undoRedo:
-  //    self.undoRedo.saveState()
+  q->saveStateForUndo();
+
   if (q->integerParameter("BrushPixelMode"))
     {
     this->paintPixels(viewWidget, this->PaintCoordinates_World);
@@ -1061,12 +1059,12 @@ void qSlicerSegmentEditorPaintEffect::setMRMLDefaults()
 {
   Superclass::setMRMLDefaults();
 
-  this->setCommonParameter("BrushMinimumRadius", 0.01);
-  this->setCommonParameter("BrushMaximumRadius", 100.0);
-  this->setCommonParameter("BrushRadius", 5.0);
-  this->setCommonParameter("BrushSphere", 0);
-  this->setCommonParameter("ColorSmudge", 0);
-  this->setCommonParameter("BrushPixelMode", 0);
+  this->setCommonParameterDefault("BrushMinimumRadius", 0.01);
+  this->setCommonParameterDefault("BrushMaximumRadius", 100.0);
+  this->setCommonParameterDefault("BrushRadius", 5.0);
+  this->setCommonParameterDefault("BrushSphere", 0);
+  this->setCommonParameterDefault("ColorSmudge", 0);
+  this->setCommonParameterDefault("BrushPixelMode", 0);
 }
 
 //-----------------------------------------------------------------------------

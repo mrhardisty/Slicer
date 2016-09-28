@@ -80,7 +80,8 @@ public:
   /// Combines the inputImage and imageToAppend into a new image by max/min operation. The extent will be the union of the two images.
   /// Extent can be specified to restrict imageToAppend's extent to a smaller region.
   /// inputImage and imageToAppend must have the same geometry, but they may have different extents.
-  static bool MergeImage(vtkOrientedImageData* inputImage, vtkOrientedImageData* imageToAppend, vtkOrientedImageData* outputImage, int operation, const int extent[6] = 0, int maskThreshold=0, int fillValue=1);
+  static bool MergeImage(vtkOrientedImageData* inputImage, vtkOrientedImageData* imageToAppend, vtkOrientedImageData* outputImage, int operation,
+    const int extent[6] = 0, int maskThreshold = 0, int fillValue = 1, bool *outputModified=NULL);
 
   /// Modifies inputImage in-place by combining with modifierImage using max/min operation.
   /// The extent will remain unchanged.
@@ -113,8 +114,13 @@ public:
   /// Only considers spacing and orientation, origin and extent may be different!
   static bool DoGeometriesMatchIgnoreOrigin(vtkOrientedImageData* image1, vtkOrientedImageData* image2);
 
-  /// Transform input extent to determine output extent of an image. Use all bounding box corners
+  /// Transform input extent to determine output extent of an image. Use all bounding box corners,
+  /// may miss part of the extent in case of non-linear transforms are used.
   static void TransformExtent(const int inputExtent[6], vtkAbstractTransform* inputToOutputTransform, int outputExtent[6]);
+
+  /// Transform input bounds to determine output bounds. Use all bounding box corners,
+  /// may miss part of the extent in case of non-linear transforms are used.
+  static void TransformBounds(const double inputBounds[6], vtkAbstractTransform* inputToOutputTransform, double outputBounds[6]);
 
   /// Transform bounds of oriented image data using a linear or non-linear transform
   static void TransformOrientedImageDataBounds(vtkOrientedImageData* image, vtkAbstractTransform* transform, double transformedBounds[6]);

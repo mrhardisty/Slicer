@@ -2,7 +2,8 @@
 
   Program: 3D Slicer
 
-  Copyright (c) Kitware Inc.
+  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
+  Queen's University, Kingston, ON, Canada. All Rights Reserved.
 
   See COPYRIGHT.txt
   or http://www.slicer.org/copyright/copyright.txt for details.
@@ -27,7 +28,10 @@
 #include <set>
 
 class vtkMRMLColorTableNode;
+class vtkSegmentation;
+class vtkStringArray;
 class vtkVector3d;
+
 
 /// \ingroup Segmentations
 /// \brief MRML node for representing segmentation display attributes.
@@ -65,7 +69,7 @@ public:
     , Visible2DFill(true)
     , Visible2DOutline(true)
     , Opacity3D(1.0)
-    , Opacity2DFill(0.5)
+    , Opacity2DFill(1.0) // Default is 1, because these are relative values. Half transparency is default for the whole segmentation
     , Opacity2DOutline(1.0)
       {
       Color[0] = 1.0;
@@ -109,13 +113,30 @@ public:
   /// Set name of representation that is displayed in the 3D view if exists
   vtkSetStringMacro(PreferredDisplayRepresentationName3D);
 
-public:
-  /// Create color table node for segmentation
-  /// First two values are fixed: 0=Background, 1=Invalid
-  /// The subsequent colors correspond to the segments in order of segment indices.
-  /// \param segmentationNodeName Name of the segmentation node that is set to the color node with a postfix
-  virtual vtkMRMLColorTableNode* CreateColorTableNode(const char* segmentationNodeName);
+  /// Get/Set 3D visibility
+  vtkGetMacro(Visibility3D, bool);
+  vtkSetMacro(Visibility3D, bool);
+  vtkBooleanMacro(Visibility3D, bool);
+  /// Get/Set 2D fill visibility
+  vtkGetMacro(Visibility2DFill, bool);
+  vtkSetMacro(Visibility2DFill, bool);
+  vtkBooleanMacro(Visibility2DFill, bool);
+  /// Get/Set 2D outline visibility
+  vtkGetMacro(Visibility2DOutline, bool);
+  vtkSetMacro(Visibility2DOutline, bool);
+  vtkBooleanMacro(Visibility2DOutline, bool);
 
+  /// Get/Set 3D opacity
+  vtkGetMacro(Opacity3D, double);
+  vtkSetMacro(Opacity3D, double);
+  /// Get/Set 2D fill opacity
+  vtkGetMacro(Opacity2DFill, double);
+  vtkSetMacro(Opacity2DFill, double);
+  /// Get/Set 2D outline opacity
+  vtkGetMacro(Opacity2DOutline, double);
+  vtkSetMacro(Opacity2DOutline, double);
+
+public:
   /// Get segment display properties for a specific segment
   /// \param segmentID Identifier of segment of which the properties are queried
   /// \param properties Display properties of the segment are copied into this object. If display properties
@@ -123,14 +144,11 @@ public:
   /// \return True if display properties are specified for the segment.
   bool GetSegmentDisplayProperties(std::string segmentID, SegmentDisplayProperties &properties);
 
-  /// Get information about segment display properties specification.
-  /// Does not log warning if display properties have not been defined for
-  /// \param segmentID Identifier of segment of which the properties are queried
-  /// \return True if display properties are specified for the segment.
-  bool GetSegmentDisplayPropertiesDefined(std::string segmentID);
-
-  /// Set segment display properties. Add new entry if not in list already
+  /// Set segment display properties.
   void SetSegmentDisplayProperties(std::string segmentID, SegmentDisplayProperties &properties);
+
+  /// Set segment display properties to default.
+  void SetSegmentDisplayPropertiesToDefault(const std::string& segmentId);
 
   /// Remove segment display properties
   void RemoveSegmentDisplayProperties(std::string segmentID);
@@ -148,8 +166,7 @@ public:
   void GenerateSegmentColor(double color[3]);
   /// Python compatibility function for \sa GenerateSegmentColor
   void GenerateSegmentColor(double &r, double &g, double &b);
-  /// Increment \sa NumberOfAddedSegments when new segment is added
-  void IncrementNumberOfAddedSegments();
+
 
   /// Collect representation names that are stored as poly data
   void GetPolyDataRepresentationNames(std::set<std::string> &representationNames);
@@ -229,13 +246,16 @@ public:
   void SetSegmentOpacity(std::string segmentID, double opacity);
   void SetAllSegmentsOpacity(double opacity, bool changeVisibleSegmentsOnly = false);
 
-protected:
-  /// Set segment color in associated color table
-  /// \return Success flag
-  bool SetSegmentColorTableEntry(std::string segmentId, double r, double g, double b);
+  /// Get all visible segment IDs.
+  void GetVisibleSegmentIDs(vtkStringArray* segmentIDs);
 
+protected:
   /// Convenience function for getting all segment IDs.
   void GetAllSegmentIDs(std::vector<std::string>& segmentIDs, bool visibleSegmentsOnly);
+
+  /// Update list of segment display properties.
+  /// Remove entries for missing segments and add missing entries for existing segments
+  void UpdateSegmentList();
 
 protected:
   vtkMRMLSegmentationDisplayNode();
@@ -260,6 +280,24 @@ protected:
   /// Number of segments ever added to the segmentation belonging to this display node.
   /// Used to generate new color for new segments, taken into account removed segments too.
   unsigned int NumberOfAddedSegments;
+
+  /// For checking if cached segment list in SegmentationDisplayProperties has to be updated
+  vtkMTimeType SegmentListUpdateTime;
+  vtkSegmentation* SegmentListUpdateSource;
+
+  /// 3D visibility for the whole segmentation
+  bool Visibility3D;
+  /// 2D fill visibility for the whole segmentation
+  bool Visibility2DFill;
+  /// 2D outline visibility for the whole segmentation
+  bool Visibility2DOutline;
+
+  /// 3D opacity for the whole segmentation
+  double Opacity3D;
+  /// 2D fill opacity for the whole segmentation
+  double Opacity2DFill;
+  /// 2D outline opacity for the whole segmentation
+  double Opacity2DOutline;
 };
 
 #endif

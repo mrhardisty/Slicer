@@ -101,8 +101,6 @@ void vtkSlicerSegmentationsModuleLogic::SetMRMLSceneInternal(vtkMRMLScene* newSc
   vtkNew<vtkIntArray> events;
   events->InsertNextValue(vtkMRMLScene::NodeAddedEvent);
   events->InsertNextValue(vtkMRMLScene::NodeRemovedEvent);
-  // events->InsertNextValue(vtkMRMLScene::EndCloseEvent);
-  events->InsertNextValue(vtkMRMLScene::EndImportEvent);
   this->SetAndObserveMRMLSceneEvents(newScene, events.GetPointer());
 }
 
@@ -115,9 +113,8 @@ void vtkSlicerSegmentationsModuleLogic::RegisterNodes()
     return;
     }
 
-  this->GetMRMLScene()->RegisterNodeClass(vtkSmartPointer<vtkMRMLSegmentationNode>::New());
-  this->GetMRMLScene()->RegisterNodeClass(vtkSmartPointer<vtkMRMLSegmentationDisplayNode>::New());
-  this->GetMRMLScene()->RegisterNodeClass(vtkSmartPointer<vtkMRMLSegmentationStorageNode>::New());
+  // vtkMRMLSegmentationNode, vtkMRMLSegmentationDisplayNode, and
+  // vtkMRMLSegmentationStorageNode nodes are registered in vtkMRMLScene.
   this->GetMRMLScene()->RegisterNodeClass(vtkSmartPointer<vtkMRMLSegmentEditorNode>::New());
 
   // Register converter rules
@@ -186,23 +183,6 @@ void vtkSlicerSegmentationsModuleLogic::OnSubjectHierarchyUIDAdded(vtkObject* ca
     if (node)
       {
       node->OnSubjectHierarchyUIDAdded(shNodeWithNewUID);
-      }
-    }
-}
-
-//---------------------------------------------------------------------------
-void vtkSlicerSegmentationsModuleLogic::OnMRMLSceneEndImport()
-{
-  // Re-generate merged labelmap for segmentation nodes after importing a scene, as their associated color table nodes
-  // might have been loaded after the segmentation node, and merged labelmap generation relies on those nodes.
-  std::vector<vtkMRMLNode*> segmentationNodes;
-  unsigned int numberOfNodes = this->GetMRMLScene()->GetNodesByClass("vtkMRMLSegmentationNode", segmentationNodes);
-  for (unsigned int nodeIndex=0; nodeIndex<numberOfNodes; nodeIndex++)
-    {
-    vtkMRMLSegmentationNode* node = vtkMRMLSegmentationNode::SafeDownCast(segmentationNodes[nodeIndex]);
-    if (node && node->HasMergedLabelmap())
-      {
-      node->ReGenerateDisplayedMergedLabelmap();
       }
     }
 }
@@ -363,7 +343,7 @@ bool vtkSlicerSegmentationsModuleLogic::CreateLabelmapVolumeFromOrientedImageDat
     }
 
   // Make sure merged labelmap extents starts at zeros for compatibility reasons
-  vtkMRMLSegmentationNode::ShiftVolumeNodeExtentToZeroStart(labelmapVolumeNode);
+  labelmapVolumeNode->ShiftImageDataExtentToZeroStart();
 
   return true;
 }
@@ -399,20 +379,18 @@ vtkOrientedImageData* vtkSlicerSegmentationsModuleLogic::CreateOrientedImageData
 //-----------------------------------------------------------------------------
 int vtkSlicerSegmentationsModuleLogic::DoesLabelmapContainSingleLabel(vtkMRMLLabelMapVolumeNode* labelmapVolumeNode)
 {
-  if (!labelmapVolumeNode)
-    {
+  if (!labelmapVolumeNode || !labelmapVolumeNode->GetImageData())
+  {
     vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::DoesLabelmapContainSingleLabel: Invalid labelmap volume MRML node");
     return 0;
-    }
+  }
+  int highLabel = (int)(ceil(labelmapVolumeNode->GetImageData()->GetScalarRange()[1]));
+  if (highLabel == 0)
+  {
+    return 0;
+  }
   vtkSmartPointer<vtkImageAccumulate> imageAccumulate = vtkSmartPointer<vtkImageAccumulate>::New();
   imageAccumulate->SetInputConnection(labelmapVolumeNode->GetImageDataConnection());
-  imageAccumulate->Update();
-  int highLabel = (int)imageAccumulate->GetMax()[0];
-  if (highLabel == 0)
-    {
-    return 0;
-    }
-
   imageAccumulate->IgnoreZeroOn();
   imageAccumulate->Update();
   int lowLabel = (int)imageAccumulate->GetMin()[0];
@@ -424,6 +402,47 @@ int vtkSlicerSegmentationsModuleLogic::DoesLabelmapContainSingleLabel(vtkMRMLLab
 
   return lowLabel;
 }
+
+//-----------------------------------------------------------------------------
+void vtkSlicerSegmentationsModuleLogic::GetAllLabelValues(vtkIntArray* labels, vtkImageData* labelmap)
+{
+  if (!labels)
+    {
+    vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::GetAllLabelValues: Invalid labels");
+    return;
+    }
+  labels->Reset();
+  if (!labelmap)
+    {
+    vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::GetAllLabelValues: Invalid labelmap");
+    return;
+   }
+  double* scalarRange = labelmap->GetScalarRange();
+  int lowLabel = (int)(floor(scalarRange[0]));
+  int highLabel = (int)(ceil(scalarRange[1]));
+  vtkSmartPointer<vtkImageAccumulate> imageAccumulate = vtkSmartPointer<vtkImageAccumulate>::New();
+  imageAccumulate->SetInputData(labelmap);
+  imageAccumulate->IgnoreZeroOn(); // Do not create segment from background
+  imageAccumulate->SetComponentExtent(lowLabel, highLabel, 0, 0, 0, 0);
+  imageAccumulate->SetComponentOrigin(0, 0, 0);
+  imageAccumulate->SetComponentSpacing(1, 1, 1);
+  imageAccumulate->Update();
+
+  for (int label = lowLabel; label <= highLabel; ++label)
+    {
+    if (label == 0)
+      {
+      continue;
+      }
+    double frequency = imageAccumulate->GetOutput()->GetPointData()->GetScalars()->GetTuple1(label - lowLabel);
+    if (frequency == 0.0)
+      {
+      continue;
+      }
+    labels->InsertNextValue(label);
+    }
+}
+
 
 //-----------------------------------------------------------------------------
 vtkSegment* vtkSlicerSegmentationsModuleLogic::CreateSegmentFromLabelmapVolumeNode(vtkMRMLLabelMapVolumeNode* labelmapVolumeNode, vtkMRMLSegmentationNode* segmentationNode/*=NULL*/)
@@ -568,6 +587,7 @@ vtkMRMLSegmentationNode* vtkSlicerSegmentationsModuleLogic::GetSegmentationNodeF
 {
   if (!segmentShNode)
     {
+    vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::GetSegmentationNodeForSegmentSubjectHierarchyNode: input subject hierarchy node is invalid");
     return NULL;
     }
 
@@ -593,7 +613,7 @@ vtkSegment* vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierar
 {
   vtkMRMLSegmentationNode* segmentationNode =
     vtkSlicerSegmentationsModuleLogic::GetSegmentationNodeForSegmentSubjectHierarchyNode(segmentShNode);
-  if (!segmentationNode)
+  if (!segmentShNode || !segmentationNode)
     {
     return NULL;
     }
@@ -601,14 +621,16 @@ vtkSegment* vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierar
   const char* segmentId = segmentShNode->GetAttribute(vtkMRMLSegmentationNode::GetSegmentIDAttributeName());
   if (!segmentId)
     {
-    vtkWarningWithObjectMacro(segmentShNode, "vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierarchyNode: Segment subject hierarchy node does not contain segment ID!");
+    vtkWarningWithObjectMacro(segmentShNode, "vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierarchyNode: Segment subject hierarchy node "
+      << (segmentShNode->GetID() ? segmentShNode->GetID() : "(unknown)") << " does not contain segment ID");
     return NULL;
     }
 
   vtkSegment* segment = segmentationNode->GetSegmentation()->GetSegment(segmentId);
   if (!segment)
     {
-    vtkErrorWithObjectMacro(segmentShNode, "vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierarchyNode: Segmentation does not contain segment with given ID!");
+    vtkErrorWithObjectMacro(segmentShNode, "vtkSlicerSegmentationsModuleLogic::GetSegmentForSegmentSubjectHierarchyNode: "
+      "Segmentation does not contain segment with given ID: " << (segmentId ? segmentId : "(empty)"));
     }
 
   return segment;
@@ -794,6 +816,31 @@ bool vtkSlicerSegmentationsModuleLogic::ExportAllSegmentsToLabelmapNode(vtkMRMLS
 }
 
 //-----------------------------------------------------------------------------
+bool vtkSlicerSegmentationsModuleLogic::ImportModelToSegmentationNode(vtkMRMLModelNode* modelNode, vtkMRMLSegmentationNode* segmentationNode)
+{
+  if (!segmentationNode)
+    {
+    vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::ImportModelToSegmentationNode: Invalid segmentation node");
+    return false;
+    }
+  if (!modelNode || !modelNode->GetPolyData())
+    {
+    vtkErrorWithObjectMacro(segmentationNode, "ImportLabelmapToSegmentationNode: Invalid model node");
+    return false;
+    }
+  vtkSmartPointer<vtkSegment> segment = vtkSmartPointer<vtkSegment>::Take(
+    vtkSlicerSegmentationsModuleLogic::CreateSegmentFromModelNode(modelNode, segmentationNode));
+  if (!segment.GetPointer())
+    {
+    return false;
+    }
+  // Add segment to current segmentation
+  segmentationNode->GetSegmentation()->AddSegment(segment);
+  segmentationNode->CreateDefaultDisplayNodes();
+  return true;
+}
+
+//-----------------------------------------------------------------------------
 bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRMLLabelMapVolumeNode* labelmapNode, vtkMRMLSegmentationNode* segmentationNode)
 {
   if (!segmentationNode)
@@ -830,12 +877,9 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRML
     }
 
   // Split labelmap node into per-label image data
-  vtkSmartPointer<vtkImageAccumulate> imageAccumulate = vtkSmartPointer<vtkImageAccumulate>::New();
-  imageAccumulate->SetInputConnection(labelmapNode->GetImageDataConnection());
-  imageAccumulate->IgnoreZeroOn(); // Do not create segment from background
-  imageAccumulate->Update();
-  int lowLabel = (int)imageAccumulate->GetMin()[0];
-  int highLabel = (int)imageAccumulate->GetMax()[0];
+
+  vtkNew<vtkIntArray> labelValues;
+  vtkSlicerSegmentationsModuleLogic::GetAllLabelValues(labelValues.GetPointer(), labelmapNode->GetImageData());
 
   // Set master representation to binary labelmap
   segmentationNode->GetSegmentation()->SetMasterRepresentationName(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
@@ -849,17 +893,14 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRML
   threshold->SetOutputScalarType(labelmapNode->GetImageData()->GetScalarType());
   //TODO: pending resolution of bug http://www.na-mic.org/Bug/view.php?id=1822,
   //   run the thresholding in single threaded mode to avoid data corruption observed on mac release builds
-  threshold->SetNumberOfThreads(1);
-  for (int label = lowLabel; label <= highLabel; ++label)
+  //threshold->SetNumberOfThreads(1);
+
+  int segmentationNodeWasModified = segmentationNode->StartModify();
+  for (int labelIndex = 0; labelIndex < labelValues->GetNumberOfValues(); ++labelIndex)
     {
+    int label = labelValues->GetValue(labelIndex);
     threshold->ThresholdBetween(label, label);
     threshold->Update();
-
-    double* outputScalarRange = threshold->GetOutput()->GetScalarRange();
-    if (outputScalarRange[0] == 0.0 && outputScalarRange[1] == 0.0)
-      {
-      continue;
-      }
 
     // Create oriented image data for label
     vtkSmartPointer<vtkOrientedImageData> labelOrientedImageData = vtkSmartPointer<vtkOrientedImageData>::New();
@@ -881,7 +922,7 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRML
     segment->SetDefaultColor(color[0], color[1], color[2]);
 
     // If there is only one label, then the (only) segment name will be the labelmap name
-    if (lowLabel == highLabel)
+    if (labelValues->GetNumberOfValues() == 1)
       {
       labelName = labelmapNode->GetName();
       }
@@ -903,6 +944,15 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRML
       vtkOrientedImageDataResample::TransformOrientedImage(labelOrientedImageData, labelmapToSegmentationTransform);
       }
 
+    // Clip to effective extent
+    int labelOrientedImageDataEffectiveExtent[6] = { 0, -1, 0, -1, 0, -1 };
+    vtkOrientedImageDataResample::CalculateEffectiveExtent(labelOrientedImageData, labelOrientedImageDataEffectiveExtent);
+    vtkSmartPointer<vtkImageConstantPad> padder = vtkSmartPointer<vtkImageConstantPad>::New();
+    padder->SetInputData(labelOrientedImageData);
+    padder->SetOutputWholeExtent(labelOrientedImageDataEffectiveExtent);
+    padder->Update();
+    labelOrientedImageData->DeepCopy(padder->GetOutput());
+
     // Add oriented image data as binary labelmap representation
     segment->AddRepresentation(
       vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName(),
@@ -911,6 +961,8 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkMRML
     segmentationNode->GetSegmentation()->AddSegment(segment);
     } // for each label
 
+  segmentationNode->CreateDefaultDisplayNodes();
+  segmentationNode->EndModify(segmentationNodeWasModified);
   return true;
 }
 
@@ -940,12 +992,11 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkOrie
   // Note: Splitting code ported from EditorLib/HelperBox.py:split
 
   // Split labelmap node into per-label image data
-  vtkSmartPointer<vtkImageAccumulate> imageAccumulate = vtkSmartPointer<vtkImageAccumulate>::New();
-  imageAccumulate->SetInputData(labelmapImage);
-  imageAccumulate->IgnoreZeroOn(); // Do not create segment from background
-  imageAccumulate->Update();
-  int lowLabel = (int)imageAccumulate->GetMin()[0];
-  int highLabel = (int)imageAccumulate->GetMax()[0];
+
+  vtkNew<vtkIntArray> labelValues;
+  vtkSlicerSegmentationsModuleLogic::GetAllLabelValues(labelValues.GetPointer(), labelmapImage);
+
+  int segmentationNodeWasModified = segmentationNode->StartModify();
 
   // Set master representation to binary labelmap
   segmentationNode->GetSegmentation()->SetMasterRepresentationName(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
@@ -959,17 +1010,13 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkOrie
   threshold->SetOutputScalarType(labelmapImage->GetScalarType());
   //TODO: pending resolution of bug http://www.na-mic.org/Bug/view.php?id=1822,
   //   run the thresholding in single threaded mode to avoid data corruption observed on mac release builds
-  threshold->SetNumberOfThreads(1);
-  for (int label = lowLabel; label <= highLabel; ++label)
-    {
+  //threshold->SetNumberOfThreads(1);
+  for (int labelIndex = 0; labelIndex < labelValues->GetNumberOfValues(); ++labelIndex)
+  {
+    int label = labelValues->GetValue(labelIndex);
+
     threshold->ThresholdBetween(label, label);
     threshold->Update();
-
-    double* outputScalarRange = threshold->GetOutput()->GetScalarRange();
-    if (outputScalarRange[0] == 0.0 && outputScalarRange[1] == 0.0)
-      {
-      continue;
-      }
 
     // Create oriented image data for label
     vtkSmartPointer<vtkOrientedImageData> labelOrientedImageData = vtkSmartPointer<vtkOrientedImageData>::New();
@@ -1006,6 +1053,8 @@ bool vtkSlicerSegmentationsModuleLogic::ImportLabelmapToSegmentationNode(vtkOrie
     segmentationNode->GetSegmentation()->AddSegment(segment);
     } // for each label
 
+  segmentationNode->CreateDefaultDisplayNodes();
+  segmentationNode->EndModify(segmentationNodeWasModified);
   return true;
 }
 
@@ -1215,6 +1264,11 @@ bool vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment(vtkOrientedIm
 
   // Get binary labelmap representation of selected segment
   vtkSegment* selectedSegment = segmentationNode->GetSegmentation()->GetSegment(segmentID);
+  if (!selectedSegment)
+    {
+    vtkGenericWarningMacro("vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment: Invalid selected segment");
+    return false;
+    }
   vtkOrientedImageData* segmentLabelmap = vtkOrientedImageData::SafeDownCast(
     selectedSegment->GetRepresentation(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName()) );
   if (!segmentLabelmap)
@@ -1225,6 +1279,7 @@ bool vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment(vtkOrientedIm
 
   // 1. Append input labelmap to the segment labelmap if requested
   vtkSmartPointer<vtkOrientedImageData> newSegmentLabelmap = vtkSmartPointer<vtkOrientedImageData>::New();
+  bool segmentLabelmapModified = true;
 
   int* segmentLabelmapExtent = segmentLabelmap->GetExtent();
   bool segmentLabelmapEmpty = (segmentLabelmapExtent[0] > segmentLabelmapExtent[1] ||
@@ -1259,7 +1314,7 @@ bool vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment(vtkOrientedIm
       // Make sure appended image has the same lattice as the input image
       vtkSmartPointer<vtkOrientedImageData> resampledSegmentLabelmap = vtkSmartPointer<vtkOrientedImageData>::New();
       vtkOrientedImageDataResample::ResampleOrientedImageToReferenceOrientedImage(segmentLabelmap, labelmap, resampledSegmentLabelmap);
-      if (!vtkOrientedImageDataResample::MergeImage(resampledSegmentLabelmap, labelmap, newSegmentLabelmap, operation, extent))
+      if (!vtkOrientedImageDataResample::MergeImage(resampledSegmentLabelmap, labelmap, newSegmentLabelmap, operation, extent, 0, 1, &segmentLabelmapModified))
         {
         vtkErrorWithObjectMacro(segmentationNode, "vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment: Failed to merge labelmap (max)");
         return false;
@@ -1267,12 +1322,18 @@ bool vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment(vtkOrientedIm
       }
     else
       {
-      if (!vtkOrientedImageDataResample::MergeImage(segmentLabelmap, labelmap, newSegmentLabelmap, operation, extent))
+        if (!vtkOrientedImageDataResample::MergeImage(segmentLabelmap, labelmap, newSegmentLabelmap, operation, extent, 0, 1, &segmentLabelmapModified))
         {
         vtkErrorWithObjectMacro(segmentationNode, "vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment: Failed to merge labelmap (max)");
         return false;
         }
       }
+    }
+
+  if (!segmentLabelmapModified)
+    {
+    // segment labelmap not modified, there is no need to update representations
+    return true;
     }
 
   // 2. Copy the temporary padded modifier labelmap to the segment.
@@ -1312,15 +1373,11 @@ bool vtkSlicerSegmentationsModuleLogic::SetBinaryLabelmapToSegment(vtkOrientedIm
       }
     }
 
-  // Trigger display update
-  vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(segmentationNode->GetDisplayNode());
-  if (displayNode)
-    {
-    displayNode->Modified();
-    }
-
   // Re-enable master representation modified event
   segmentationNode->GetSegmentation()->SetMasterRepresentationModifiedEnabled(wasMasterRepresentationModifiedEnabled);
+  const char* segmentIdChar = segmentID.c_str();
+  segmentationNode->GetSegmentation()->InvokeEvent(vtkSegmentation::MasterRepresentationModified, (void*)segmentIdChar);
+  segmentationNode->GetSegmentation()->InvokeEvent(vtkSegmentation::RepresentationModified, (void*)segmentIdChar);
 
   return true;
 }

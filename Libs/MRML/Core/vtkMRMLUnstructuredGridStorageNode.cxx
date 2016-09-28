@@ -30,6 +30,12 @@ Version:   $Revision: 1.2 $
 vtkMRMLNodeNewMacro(vtkMRMLUnstructuredGridStorageNode);
 
 //----------------------------------------------------------------------------
+vtkMRMLUnstructuredGridStorageNode::vtkMRMLUnstructuredGridStorageNode()
+{
+  this->DefaultWriteFileExtension = "vtk";
+}
+
+//----------------------------------------------------------------------------
 void vtkMRMLUnstructuredGridStorageNode::PrintSelf(ostream& os, vtkIndent indent)
 {
   this->Superclass::PrintSelf(os,indent);
@@ -48,7 +54,7 @@ int vtkMRMLUnstructuredGridStorageNode::ReadDataInternal(vtkMRMLNode *refNode)
   vtkMRMLUnstructuredGridNode *modelNode = vtkMRMLUnstructuredGridNode::SafeDownCast (refNode);
 
   std::string fullName = this->GetFullNameFromFileName();
-  if (fullName == std::string(""))
+  if (fullName.empty())
     {
     vtkErrorMacro("ReadData: File name not specified");
     return result;
@@ -105,7 +111,7 @@ int vtkMRMLUnstructuredGridStorageNode::WriteDataInternal(vtkMRMLNode *refNode)
   vtkMRMLUnstructuredGridNode *modelNode = vtkMRMLUnstructuredGridNode::SafeDownCast(refNode);
 
   std::string fullName = this->GetFullNameFromFileName();
-  if (fullName == std::string(""))
+  if (fullName.empty())
     {
     vtkErrorMacro("vtkMRMLModelNode: File name not specified");
     return 0;
@@ -155,10 +161,4 @@ void vtkMRMLUnstructuredGridStorageNode::InitializeSupportedWriteFileTypes()
 {
   this->SupportedWriteFileTypes->InsertNextValue(
     "Unstructured Grid (.vtk)");
-}
-
-//----------------------------------------------------------------------------
-const char* vtkMRMLUnstructuredGridStorageNode::GetDefaultWriteFileExtension()
-{
-  return "vtk";
 }

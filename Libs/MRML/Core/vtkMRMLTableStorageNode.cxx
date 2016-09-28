@@ -41,6 +41,7 @@ vtkMRMLNodeNewMacro(vtkMRMLTableStorageNode);
 //----------------------------------------------------------------------------
 vtkMRMLTableStorageNode::vtkMRMLTableStorageNode()
 {
+  this->DefaultWriteFileExtension = "tsv";
 }
 
 //----------------------------------------------------------------------------
@@ -65,7 +66,7 @@ int vtkMRMLTableStorageNode::ReadDataInternal(vtkMRMLNode *refNode)
 {
   std::string fullName = this->GetFullNameFromFileName();
 
-  if (fullName == std::string(""))
+  if (fullName.empty())
     {
     vtkErrorMacro("ReadData: File name not specified");
     return 0;
@@ -260,10 +261,4 @@ void vtkMRMLTableStorageNode::InitializeSupportedWriteFileTypes()
   this->SupportedWriteFileTypes->InsertNextValue("Tab-separated values (.tsv)");
   this->SupportedWriteFileTypes->InsertNextValue("Comma-separated values (.csv)");
   this->SupportedWriteFileTypes->InsertNextValue("Text (.txt)");
-}
-
-//----------------------------------------------------------------------------
-const char* vtkMRMLTableStorageNode::GetDefaultWriteFileExtension()
-{
-  return "tsv";
 }

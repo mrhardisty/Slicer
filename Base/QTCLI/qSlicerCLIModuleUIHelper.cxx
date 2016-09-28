@@ -189,7 +189,7 @@ public:
 
   /// Return true if the None option of the widget associated with the parameter should
   /// be enabled
-  static bool shouldEnableNone(const ModuleParameter& moduleParameter);
+  static bool isNoneEnabled(const ModuleParameter& moduleParameter);
 
   static bool isOutputChannel(const ModuleParameter& moduleParameter);
 
@@ -543,9 +543,12 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createPointTagWidget(const ModuleParam
 
   widget->setNodeTypes(nodeTypes);
   //TODO - title + " FiducialList"
-  //TODO - tparameter->SetNewNodeEnabled(1);
-  //TODO - tparameter->SetNoneEnabled(noneEnabled);
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
   widget->setBaseName(_label);
+  // Markups can be added without switching to another module
+  // (just by adding a new markup node to the scene and placing a few landmarks)
+  // therefore it makes sense to enable adding nodes.
+  widget->setAddEnabled(true);
   widget->setRenameEnabled(true);
 
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
@@ -568,9 +571,12 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createPointFileTagWidget(const ModuleP
 
   widget->setNodeTypes(nodeTypes);
   //TODO - title + " FiducialList"
-  //TODO - tparameter->SetNewNodeEnabled(1);
-  //TODO - tparameter->SetNoneEnabled(noneEnabled);
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
   widget->setBaseName(_label);
+  // Markups can be added without switching to another module
+  // (just by adding a new markup node to the scene and placing a few landmarks)
+  // therefore it makes sense to enable adding nodes.
+  widget->setAddEnabled(true);
   widget->setRenameEnabled(true);
 
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
@@ -594,9 +600,11 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createRegionTagWidget(const ModulePara
   nodeTypes += "vtkMRMLAnnotationROINode";
   widget->setNodeTypes(QStringList(nodeTypes));
   //TODO - title + " RegionList"
-  //TODO - tparameter->SetNewNodeEnabled(1);
-  //TODO - tparameter->SetNoneEnabled(noneEnabled);
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
   widget->setBaseName(_label);
+  // Reegion can be added without switching to another module
+  // therefore it makes sense to enable adding nodes.
+  widget->setAddEnabled(true);
   widget->setRenameEnabled(true);
 
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
@@ -650,7 +658,6 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createImageTagWidget(const ModuleParam
 
   // TODO - title + " Volume"
 
-  QString imageIndex = QString::fromStdString(moduleParameter.GetIndex());
   QString imageLabel = QString::fromStdString(moduleParameter.GetLabel());
   QString imageName = QString::fromStdString(moduleParameter.GetName());
 
@@ -662,8 +669,7 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createImageTagWidget(const ModuleParam
     {
     widget->setShowChildNodeTypes(false);
     }
-  // If an index is given, then it means the parameter is required (not optional)
-  widget->setNoneEnabled(imageIndex.isEmpty());
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
   // Being able to create an image for the input is meaningless as the created
   // volume would be empty (useless as an input).
   // However, if it's an output, the result would be saved into the newly
@@ -705,7 +711,6 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createGeometryTagWidget(const ModulePa
     }
 
   // TODO - title + " Model"
-  // TODO - SetNoneEnabled(noneEnabled)
 
   QString _label = QString::fromStdString(moduleParameter.GetLabel());
   QString _name = QString::fromStdString(moduleParameter.GetName());
@@ -713,6 +718,8 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createGeometryTagWidget(const ModulePa
   widget->setShowHidden(0);
   widget->setNodeTypes(QStringList(nodeType));
   widget->setRenameEnabled(true);
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
+  widget->setAddEnabled(channel != "input");
   widget->setBaseName(_label);
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
   QObject::connect(this->CLIModuleWidget, SIGNAL(mrmlSceneChanged(vtkMRMLScene*)),
@@ -742,12 +749,13 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createTableTagWidget(const ModuleParam
     }
 
   // TODO - title + " Table"
-  // TODO - SetNoneEnabled(1)
 
   QString _label = QString::fromStdString(moduleParameter.GetLabel());
   QString _name = QString::fromStdString(moduleParameter.GetName());
   qMRMLNodeComboBox * widget = new qMRMLNodeComboBox;
   widget->setNodeTypes(QStringList(nodeType));
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
+  widget->setAddEnabled(channel != "input");
   widget->setRenameEnabled(true);
   widget->setBaseName(_label);
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
@@ -778,12 +786,13 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createMeasurementTagWidget(const Modul
     }
 
   // TODO - title + " Measurement"
-  // TODO - SetNoneEnabled(1)
 
   QString _label = QString::fromStdString(moduleParameter.GetLabel());
   QString _name = QString::fromStdString(moduleParameter.GetName());
   qMRMLNodeComboBox * widget = new qMRMLNodeComboBox;
   widget->setNodeTypes(QStringList(nodeType));
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
+  widget->setAddEnabled(channel != "input");
   widget->setRenameEnabled(true);
   widget->setBaseName(_label);
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
@@ -807,25 +816,32 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createTransformTagWidget(const ModuleP
 
   QString type = QString::fromStdString(moduleParameter.GetType());
 
-  // Note: TransformNode is abstract making it inappropriate for
-  // an output type since the node selector must be able to make
-  // an instance of the class.  For now, revert to LinearTransformNode.
-
-  QString defaultNodeType =
-    (channel == "input" ? "vtkMRMLTransformNode" : "vtkMRMLLinearTransformNode");
-  QString nodeType = Self::nodeTypeFromMap(Self::TransformTypeAttributeToNodeType,
-                                           type, defaultNodeType);
-
-  QString index = QString::fromStdString(moduleParameter.GetIndex());
+    QString defaultNodeType = "vtkMRMLTransformNode";
+    QString nodeType = Self::nodeTypeFromMap(Self::TransformTypeAttributeToNodeType,
+      type, defaultNodeType);
   // TODO - title + " Transform"
 
   QString _label = QString::fromStdString(moduleParameter.GetLabel());
   QString _name = QString::fromStdString(moduleParameter.GetName());
   qMRMLNodeComboBox * widget = new qMRMLNodeComboBox;
-  widget->setNoneEnabled(index.isEmpty());
-  widget->setAddEnabled(nodeType != "vtkMRMLTransformNode" && channel != "input");
+  widget->setNoneEnabled(this->isNoneEnabled(moduleParameter));
+  widget->setAddEnabled(channel != "input");
   widget->setRenameEnabled(true);
-  widget->setNodeTypes(QStringList(nodeType));
+  if (nodeType == "vtkMRMLTransformNode" && widget->addEnabled())
+    {
+    // When any kind of transform can be added, allow creating
+    // any kind of transform node types.
+    widget->setNodeTypes(QStringList()
+      << "vtkMRMLTransformNode"
+      << "vtkMRMLLinearTransformNode"
+      << "vtkMRMLGridTransformNode"
+      << "vtkMRMLBSplineTransformNode"
+      );
+    }
+  else
+    {
+    widget->setNodeTypes(QStringList(nodeType));
+    }
   widget->setBaseName(_label);
   widget->setMRMLScene(this->CLIModuleWidget->mrmlScene());
   QObject::connect(this->CLIModuleWidget, SIGNAL(mrmlSceneChanged(vtkMRMLScene*)),
@@ -856,9 +872,33 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createFileTagWidget(const ModuleParame
   QString label = QString::fromStdString(moduleParameter.GetLabel());
   QString name = QString::fromStdString(moduleParameter.GetName());
 
+  QStringList fileExtensions;
+  const std::vector< std::string > fileExtensionsStd = moduleParameter.GetFileExtensions();
+  if (!fileExtensionsStd.empty())
+    {
+    QString customFilter("Compatible Files (");
+    for (std::vector< std::string >::const_iterator it = fileExtensionsStd.begin();
+      it != fileExtensionsStd.end(); ++it)
+      {
+      if (it != fileExtensionsStd.begin())
+        {
+        customFilter.append(" ");
+        }
+      customFilter.append(QString("*")+it->c_str());
+      }
+    customFilter.append(")");
+    fileExtensions << customFilter;
+    }
+  fileExtensions << QString("All Files (*.*)");
+
   QWidget* widget = new QWidget;
   ctkPathLineEdit* pathLineEdit =
-    new ctkPathLineEdit(name, QStringList() << QString("*.*"), ctkPathLineEdit::Files, widget);
+    new ctkPathLineEdit(name, fileExtensions, ctkPathLineEdit::Files, widget);
+
+  if (isOutputChannel(moduleParameter))
+    {
+    pathLineEdit->setFilters(pathLineEdit->filters() | ctkPathLineEdit::Writable);
+    }
 
   INSTANCIATE_WIDGET_VALUE_WRAPPER(File, name, label, pathLineEdit);
 
@@ -904,14 +944,12 @@ QWidget* qSlicerCLIModuleUIHelperPrivate::createEnumerationTagWidget(const Modul
 }
 
 //-----------------------------------------------------------------------------
-bool qSlicerCLIModuleUIHelperPrivate::shouldEnableNone(const ModuleParameter& moduleParameter)
+bool qSlicerCLIModuleUIHelperPrivate::isNoneEnabled(const ModuleParameter& moduleParameter)
 {
-  // Parameters with flags can support the None node because they are optional
-  if (moduleParameter.GetLongFlag() != "" || moduleParameter.GetFlag() != "")
-    {
-    return true;
-    }
-  return false;
+  // As CLI logic is implemented now, index arguments are always required,
+  // therefore do not enable selecting 'None' for those.
+  bool indexArgument = !moduleParameter.GetIndex().empty();
+  return !indexArgument;
 }
 
 //-----------------------------------------------------------------------------

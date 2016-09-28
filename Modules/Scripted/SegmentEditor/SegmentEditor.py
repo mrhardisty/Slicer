@@ -10,12 +10,21 @@ from slicer.util import VTKObservationMixin
 class SegmentEditor(ScriptedLoadableModule):
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
+    import string
     self.parent.title = "Segment Editor"
     self.parent.categories = ["Segmentation"]
-    self.parent.dependencies = ["Segmentations"] # TODO: Change to ["Segmentations"] after fixing https://www.assembla.com/spaces/slicerrt/tickets/806-segmenteditor-generic-test-fails
-    self.parent.contributors = ["Csaba Pinter (Queen's University)"]
-    self.parent.helpText = """This module allows editing segmentation objects by directly drawing and using segmentaiton tools on the contained segments.\n\nRepresentations other than the labelmap one (which is used for editing) are automatically updated real-time, so for example the closed surface can be visualized as edited in the 3D view."""
-    self.parent.acknowledgementText = """This work is part of SparKit project, funded by Cancer Care Ontario (CCO)'s ACRU program and Ontario Consortium for Adaptive Interventions in Radiation Oncology (OCAIRO)."""
+    self.parent.dependencies = ["Segmentations"]
+    self.parent.contributors = ["Csaba Pinter (Queen's University), Andras Lasso (Queen's University)"]
+    self.parent.helpText = """
+This module allows editing segmentation objects by directly drawing and using segmentaiton tools on the contained segments.
+Representations other than the labelmap one (which is used for editing) are automatically updated real-time,
+so for example the closed surface can be visualized as edited in the 3D view.
+"""
+    self.parent.helpText += self.getDefaultModuleDocumentationLink()
+    self.parent.acknowledgementText = """
+This work is part of SparKit project, funded by Cancer Care Ontario (CCO)'s ACRU program
+and Ontario Consortium for Adaptive Interventions in Radiation Oncology (OCAIRO).
+"""
 
 #
 # SegmentEditorWidget
@@ -40,6 +49,7 @@ class SegmentEditorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     #
     import qSlicerSegmentationsModuleWidgetsPythonQt
     self.editor = qSlicerSegmentationsModuleWidgetsPythonQt.qMRMLSegmentEditorWidget()
+    self.editor.setMaximumNumberOfUndoStates(10)
     # Set parameter node first so that the automatic selections made when the scene is set are saved
     self.selectParameterNode()
     self.editor.setMRMLScene(slicer.mrmlScene)
@@ -117,11 +127,14 @@ class SegmentEditorWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     self.editor.removeViewObservations()
 
   def onSceneEndClose(self, caller, event):
-    self.enter()
+    if self.parent.isEntered:
+      self.selectParameterNode()
+      self.editor.updateWidgetFromMRML()
 
   def onSceneEndImport(self, caller, event):
-    self.selectParameterNode()
-    self.enter()
+    if self.parent.isEntered:
+      self.selectParameterNode()
+      self.editor.updateWidgetFromMRML()
 
   def cleanup(self):
     self.removeObservers()

@@ -40,26 +40,67 @@ class vtkCallbackCommand;
 class vtkStringArray;
 
 /// \ingroup SegmentationCore
+/// \brief This class encapsulates a segmentation that can contain multiple segments and multiple representations for each segment
+/// \details
+///   The primary purpose of this class is to serve as a container to store the segments (in labelmap analogy the "labels").
+///   Also provides generic functions on the segmentation level. Performs conversion to a specified representation, extracts
+///   geometry information etc.
+/// 
+///   Main points to remember:
+///   * Each segment has the same set of representations. This means that if segments are copied/moved between segmentations,
+///     then conversion will take place if possible (if not then copy will fail)
+///   * Default representations types are
+///     * Binary labelmap (vtkOrientedImageData)
+///     * Closed surface (vtkPolyData)
+///     * Additional representations can be defined (SlicerRT adds three: Planar contour, Fractional labelmap, Ribbon model)
+///   * Conversion between representations are driven by a conversion graph in which the nodes are the representations and the edges
+///     are conversion rules
+///     * When converting with the default method (\sa CreateRepresentation without specifying a path), then the path with the lowest
+///       cost is used (rules have a cost field that gives a ballpark value for the conversion cost)
+///     * Representation types can be defined by registering conversion algorithms (rules) that specify their source and target
+///       representations, and an estimated cost metric
+///   * Master representation
+///     * Privileged representation type. Can be any of the available representations, but usually it's the original representation
+///       of the data (binary labelmap for editing, binary or fractional labelmap for DICOM SEG, planar contour for DICOM RT, etc.)
+///       * Using the proper master representation ensures that no information is lost, which is crucial to avoid discrepancies that can
+///         never be solved when data is permanently lost in conversion
+///     * Properties
+///       * All conversions use it as source (up-to-date representations along conversion path are used if available)
+///       * When changed all other representations are invalidated (and is re-converted later from master)
+///       * It is the representation that is saved to disk
+///       
+///  Schematic illustration of the segmentation container:
+///  
+///                            +=============================================+
+///                            |             Patient (vtkSegmentation)       |
+///                            +======================+======================+
+///                            |  Brain (vtkSegment)  |  Tumor (vtkSegment)  |
+///                            +======================+======================+
+///            Binary labelmap | vtkOrientedImageData | vtkOrientedImageData |
+///                            +----------------------+----------------------+
+///             Closed surface | vtkPolyData          | vtkPolyData          |
+///                            +----------------------+----------------------+
+///      Custom representation | vtkDataObject        | vtkDataObject        |
+///                            +----------------------+----------------------+
+///    
 class vtkSegmentationCore_EXPORT vtkSegmentation : public vtkObject
 {
 public:
   enum
     {
-    /// Fired when the master representation in ANY segment is changed.
-    /// While it is possible for the subclasses to fire the events without modifying the actual data,
-    /// it is not recommended to do so as it doesn't mark the data as modified, which may result in
-    /// an incorrect return value for \sa GetModifiedSinceRead()
+    /// Invoked when content of the master representation in a segment is changed.
     MasterRepresentationModified = 62100,
-    /// Fired if new segment is added
+    /// Invoked when content of any representation (including the master representation) in a segment is changed.
+    RepresentationModified,
+    /// Invoked if new segment is added
     SegmentAdded,
-    /// Fired if segment is removed
+    /// Invoked if a segment is removed
     SegmentRemoved,
-    /// Fired if segment is modified
+    /// Invoked if a segment is modified (name changed, tags changed, etc).
+    /// Note: the event is not invoked when content of a representation in a segment is changed.
     SegmentModified,
-    /// Fired if a representation is created on conversion
-    RepresentationCreated,
-    /// Fired if a representation is removed
-    RepresentationRemoved
+    /// Invoked if a representation is created or removed in the segments (e.g., created by conversion from master).
+    ContainedRepresentationNamesModified
     };
 
   enum
@@ -68,8 +109,12 @@ public:
     EXTENT_REFERENCE_GEOMETRY,
     /// Extent is computed as union of extent of all segments
     EXTENT_UNION_OF_SEGMENTS,
+    /// Extent is computed as union of extent of all segments, with a single-voxel padding added on each side
+    EXTENT_UNION_OF_SEGMENTS_PADDED,
     /// Extent is computed as union of effective extent of all segments
-    EXTENT_UNION_OF_EFFECTIVE_SEGMENTS
+    EXTENT_UNION_OF_EFFECTIVE_SEGMENTS,
+    /// Extent is computed as union of effective extent of all segments, with a single-voxel padding added on each side
+    EXTENT_UNION_OF_EFFECTIVE_SEGMENTS_PADDED
     };
 
   /// Container type for segments. Maps segment IDs to segment objects
@@ -103,21 +148,14 @@ public:
   /// Harden transform both if oriented image data and poly data.
   virtual void ApplyNonLinearTransform(vtkAbstractTransform* transform);
 
-  /// Returns true if the node (default behavior) or the internal data are modified
-  /// since read/written.
-  /// Note: The MTime of the internal data is used to know if it has been modified.
-  /// So if you invoke one of the data modified events without calling Modified() on the
-  /// internal data, GetModifiedSinceRead() won't return true.
-  /// \sa vtkMRMLStorableNode::GetModifiedSinceRead()
-  virtual bool GetModifiedSinceRead();
-
 #ifndef __VTK_WRAP__
 //BTX
   /// Determine common labelmap geometry for whole segmentation.
   /// If the segmentation has reference image geometry conversion parameter, then oversample it to
   /// be at least as fine resolution as the highest resolution labelmap contained, otherwise just use
   /// the geometry of the highest resolution labelmap in the segments.
-  /// \param extentComputationMode Determines how to compute extents (EXTENT_REFERENCE_GEOMETRY, EXTENT_UNION_OF_SEGMENTS, or EXTENT_UNION_OF_EFFECTIVE_SEGMENTS).
+  /// \param extentComputationMode Determines how to compute extents (EXTENT_REFERENCE_GEOMETRY, EXTENT_UNION_OF_SEGMENTS, EXTENT_UNION_OF_SEGMENTS_PADDED,
+  ///   EXTENT_UNION_OF_EFFECTIVE_SEGMENTS, or EXTENT_UNION_OF_EFFECTIVE_SEGMENTS_PADDED).
   /// \param segmentIDs List of IDs of segments to include in the merged labelmap. If empty or missing, then all segments are included
   /// \return Geometry string that can be deserialized using \sa vtkSegmentationConverter::SerializeImageGeometry
   std::string DetermineCommonLabelmapGeometry(int extentComputationMode = EXTENT_UNION_OF_SEGMENTS, const std::vector<std::string>& segmentIDs = std::vector<std::string>());
@@ -127,7 +165,8 @@ public:
   /// \param commonGeometryImage Extent will be returned in this image geometry
   /// \param segmentIDs List of IDs of segments to include in the merged labelmap. If empty or missing, then all segments are included
   /// \param computeEffectiveExtent Specifies if the extent of a segment is the whole extent or the effective extent (where voxel values >0 found)
-  void DetermineCommonLabelmapExtent(int commonGeometryExtent[6], vtkOrientedImageData* commonGeometryImage, const std::vector<std::string>& segmentIDs = std::vector<std::string>(), bool computeEffectiveExtent=false);
+  void DetermineCommonLabelmapExtent(int commonGeometryExtent[6], vtkOrientedImageData* commonGeometryImage,
+    const std::vector<std::string>& segmentIDs = std::vector<std::string>(), bool computeEffectiveExtent=false, bool addPadding=false);
 //ETX
 #endif // __VTK_WRAP__
 

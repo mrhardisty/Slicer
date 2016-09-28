@@ -42,8 +42,10 @@ class SegmentEditorIdentifyIslandsEffect(AbstractScriptedSegmentEditorIslandEffe
     return slicer.util.mainWindow().cursor
 
   def onApply(self):
-    #TODO:
-    #self.logic.undoRedo = self.undoRedo
+    # This can be a long operation - indicate it to the user
+    qt.QApplication.setOverrideCursor(qt.Qt.WaitCursor)
+
+    self.scriptedEffect.saveStateForUndo()
 
     # Get parameters
     fullyConnected = self.scriptedEffect.integerParameter("FullyConnected")
@@ -90,11 +92,6 @@ class SegmentEditorIdentifyIslandsEffect(AbstractScriptedSegmentEditorIslandEffe
     slicer.vtkSlicerSegmentationsModuleLogic.ImportLabelmapToSegmentationNode( \
       multiLabelImage, segmentationNode, selectedSegmentName )
 
-    # Set labelmap visibility to outline for the new segments
-    displayNode = segmentationNode.GetDisplayNode()
-    #for index in xrange(1,islandCount+1):
-    #  segmentID = selectedSegmentName + "_" + str(index)
-    #  displayNode.SetSegmentVisibility2DFill(segmentID, False)
-    #  displayNode.SetSegmentVisibility2DOutline(segmentID, True)
+    segmentationNode.GetSegmentation().RemoveSegment(selectedSegmentID)
 
-    displayNode.SetSegmentVisibility(selectedSegmentID, False)
+    qt.QApplication.restoreOverrideCursor()
